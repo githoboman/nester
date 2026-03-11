@@ -8,7 +8,12 @@
       "Bash(gh api repos/Suncrest-Labs/nester-mobile/contents --jq '.[].name')",
       "Bash(gh api repos/Suncrest-Labs/nester-website -X PATCH -f name=nester)",
       "Bash(pnpm --filter @nester/website build)",
-      "Bash(pnpm add three @react-three/fiber @react-three/drei)"
+      "Bash(pnpm add three @react-three/fiber @react-three/drei)",
+      "Bash(gh run:*)",
+      "Bash(gh api:*)",
+      "Bash(gh pr:*)",
+      "Bash(npm run:*)",
+      "Bash(npm ci:*)"
     ]
   }
 }
