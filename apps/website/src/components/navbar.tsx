@@ -54,11 +54,13 @@ export function Navbar() {
                             </Link>
                         ))}
                     </div>
-                    <Button
-                        className="bg-[#0D0E1C] hover:bg-[#0D0E1C]/90 text-white rounded-full px-6 font-medium text-sm transition-all shadow-none"
-                    >
-                        Nester for Web
-                    </Button>
+                    <Link href="http://localhost:3001" target="_blank">
+                        <Button
+                            className="bg-[#0D0E1C] hover:bg-[#0D0E1C]/90 text-white rounded-full px-6 font-medium text-sm transition-all shadow-none"
+                        >
+                            Nester for Web
+                        </Button>
+                    </Link>
                 </div>
 
                 <Sheet>
@@ -83,9 +85,11 @@ export function Navbar() {
                                 ))}
                             </div>
                             <div className="mt-auto mb-8">
-                                <Button className="w-full bg-[#0D0E1C] hover:bg-[#0D0E1C]/90 text-white rounded-full">
-                                    Nester for Web
-                                </Button>
+                                <Link href="http://localhost:3001" target="_blank" className="w-full">
+                                    <Button className="w-full bg-[#0D0E1C] hover:bg-[#0D0E1C]/90 text-white rounded-full">
+                                        Nester for Web
+                                    </Button>
+                                </Link>
                             </div>
                         </div>
                     </SheetContent>

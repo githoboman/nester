@@ -1,26 +1,164 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+    --color-background: hsl(var(--background));
+    --color-foreground: hsl(var(--foreground));
+    --color-card: hsl(var(--card));
+    --color-card-foreground: hsl(var(--card-foreground));
+    --color-primary: hsl(var(--primary));
+    --color-primary-foreground: hsl(var(--primary-foreground));
+    --color-secondary: hsl(var(--secondary));
+    --color-secondary-foreground: hsl(var(--secondary-foreground));
+    --color-muted: hsl(var(--muted));
+    --color-muted-foreground: hsl(var(--muted-foreground));
+    --color-accent: hsl(var(--accent));
+    --color-accent-foreground: hsl(var(--accent-foreground));
+    --color-destructive: hsl(var(--destructive));
+    --color-destructive-foreground: hsl(var(--destructive-foreground));
+    --color-border: hsl(var(--border));
+    --color-input: hsl(var(--input));
+    --color-ring: hsl(var(--ring));
+    --color-brand-purple: #B6509E;
+    --color-brand-cyan: #2EBAC6;
+    --color-brand-dark: #0D0E1C;
+    --font-sans: var(--font-inter), system-ui, sans-serif;
+    --font-heading: var(--font-space-grotesk), system-ui, sans-serif;
+    --font-display: var(--font-cormorant), Georgia, serif;
+    --radius: 0.75rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 10%;
+    --primary: 255 60% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 255 60% 60%;
+    --gradient-brand: linear-gradient(135deg, #B6509E 0%, #2EBAC6 100%);
+}
+
+* {
+    border-color: hsl(var(--border));
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Brand gradient text */
+.gradient-text {
+    background: linear-gradient(135deg, #B6509E 0%, #2EBAC6 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* Animated gradient border */
+@property --border-angle {
+    syntax: "<angle>";
+    initial-value: 0deg;
+    inherits: false;
+}
+
+@keyframes border-rotate {
+    0% { --border-angle: 0deg; }
+    100% { --border-angle: 360deg; }
+}
+
+.gradient-border {
+    position: relative;
+    border-color: transparent !important;
+    overflow: visible;
+}
+
+.gradient-border::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: conic-gradient(
+        from var(--border-angle),
+        #6025f5, #ff5555, #facc15, #6025f5
+    );
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+    animation: border-rotate 3s linear infinite;
+    z-index: 0;
+}
+
+.gradient-border::after {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    padding: 4px;
+    background: conic-gradient(
+        from var(--border-angle),
+        #6025f5 0deg,
+        #ff5555 20deg,
+        #facc15 40deg,
+        transparent 60deg,
+        transparent 320deg,
+        #6025f5 360deg
+    );
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+    filter: blur(4px);
+    opacity: 1;
+    animation: border-rotate 6s linear infinite;
+    z-index: 0;
+}
+
+.gradient-border > * {
+    position: relative;
+    z-index: 1;
+}
+
+/* Fade in animation */
+@keyframes fade-in-up {
+    0% { opacity: 0; transform: translateY(10px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in-up {
+    animation: fade-in-up 0.5s ease-out forwards;
+}
+
+/* Float animation for logo */
+@keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-6px); }
+}
+
+.animate-float {
+    animation: float 4s ease-in-out infinite;
+}
+
+/* Scrollbar */
+.scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
 }
