@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useWallet } from "@/components/wallet-provider";
 import { truncateAddress, cn } from "@/lib/utils";
 import { LogOut, Copy, Check, ChevronDown } from "lucide-react";
@@ -9,6 +10,7 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export function Navbar() {
+    const pathname = usePathname();
     const { address, isConnected, disconnect } = useWallet();
     const [copied, setCopied] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
@@ -65,17 +67,30 @@ export function Navbar() {
 
                     {isConnected && (
                         <div className="hidden md:flex items-center gap-8">
-                            {["Dashboard", "Vaults", "Settlements"].map(
-                                (label) => (
-                                    <Link
-                                        key={label}
-                                        href="/dashboard"
-                                        className="text-[15px] font-medium text-foreground/70 hover:text-foreground transition-colors relative group py-2"
-                                    >
-                                        {label}
-                                    </Link>
-                                )
-                            )}
+                            {[
+                                { label: "Dashboard", href: "/dashboard" },
+                                { label: "Vaults", href: "/dashboard/vaults" },
+                                {
+                                    label: "Settlements",
+                                    href: "/dashboard/settlements",
+                                },
+                            ].map((item) => (
+                                <Link
+                                    key={item.label}
+                                    href={item.href}
+                                    className={cn(
+                                        "text-[15px] font-medium transition-colors relative py-2",
+                                        pathname === item.href
+                                            ? "text-foreground"
+                                            : "text-foreground/50 hover:text-foreground/80"
+                                    )}
+                                >
+                                    {item.label}
+                                    {pathname === item.href && (
+                                        <span className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full bg-foreground/80" />
+                                    )}
+                                </Link>
+                            ))}
                         </div>
                     )}
 
