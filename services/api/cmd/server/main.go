@@ -8,23 +8,26 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/Suncrest-Labs/nester/internal/config"
+	"github.com/Suncrest-Labs/nester/internal/handler"
 )
 
 func main() {
-	port := resolvePort()
+	cfg := config.Load()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", healthHandler)
+	health := handler.NewHealthHandler()
+	router := handler.NewRouter(cfg, health)
 
 	server := &http.Server{
-		Addr:         ":" + port,
-		Handler:      mux,
+		Addr:         ":" + cfg.Port,
+		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
-	log.Printf("server starting on :%s", port)
+	log.Printf("server starting on :%s", cfg.Port)
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -32,13 +35,15 @@ func main() {
 		}
 	}()
 
+	health.SetReady(true)
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
 	log.Println("shutdown signal received, gracefully stopping server")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
@@ -46,16 +51,4 @@ func main() {
 	}
 
 	log.Println("server stopped")
-}
-
-func resolvePort() string {
-	if p := os.Getenv("PORT"); p != "" {
-		return p
-	}
-	return "8080"
-}
-
-func healthHandler(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok"))
 }
