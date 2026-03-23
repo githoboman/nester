@@ -12,5 +12,8 @@ test:
 fmt:
 	go fmt ./...
 
+fmt-check:
+	@if gofmt -l . | grep -q .; then echo "formatting issues found"; exit 1; fi
+
 lint:
 	golangci-lint run
