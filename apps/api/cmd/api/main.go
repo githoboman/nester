@@ -57,7 +57,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:         cfg.Server().Address(),
-		Handler:      middleware.Logging(baseLogger)(mux),
+		Handler:      middleware.LimitRequestBody(1 * 1024 * 1024)(middleware.Logging(baseLogger)(mux)),
 		ReadTimeout:  cfg.Server().ReadTimeout(),
 		WriteTimeout: cfg.Server().WriteTimeout(),
 	}

@@ -4,10 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"net/http"
-
 	"github.com/google/uuid"
-
 	"github.com/suncrestlabs/nester/apps/api/internal/domain/vault"
 	"github.com/suncrestlabs/nester/apps/api/internal/service"
 	logpkg "github.com/suncrestlabs/nester/apps/api/pkg/logger"
@@ -50,6 +49,11 @@ func (h *VaultHandler) createVault(w http.ResponseWriter, r *http.Request) {
 	userID, err := uuid.Parse(request.UserID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "user_id must be a valid UUID")
+		return
+	}
+
+	if err := validateCurrencyCode(request.Currency); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid currency: "+err.Error())
 		return
 	}
 
@@ -135,4 +139,27 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, errorResponse{Error: message})
+}
+
+
+// validateCurrencyCode verifies the currency code is a valid ISO 4217 format (3 uppercase letters)
+func validateCurrencyCode(code string) error {
+	if len(code) != 3 {
+		return errors.New("currency code must be exactly 3 characters (ISO 4217)")
+	}
+	code = strings.ToUpper(code)
+	if code != strings.ToUpper(strings.TrimSpace(code)) || !isAlpha(code) {
+		return errors.New("currency code must be 3 uppercase letters (e.g., USD, EUR, GBP)")
+	}
+	return nil
+}
+
+// isAlpha returns true if all characters in the string are alphabetic
+func isAlpha(s string) bool {
+	for _, ch := range s {
+		if !(ch >= 'A' && ch <= 'Z') && !(ch >= 'a' && ch <= 'z') {
+			return false
+		}
+	}
+	return len(s) > 0
 }

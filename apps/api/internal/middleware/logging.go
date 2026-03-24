@@ -60,3 +60,14 @@ func Logging(baseLogger *slog.Logger) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// LimitRequestBody wraps an http.Handler and enforces a maximum request body size.
+// Requests exceeding the limit will receive a 413 Payload Too Large response.
+func LimitRequestBody(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
