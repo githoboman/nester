@@ -3,16 +3,8 @@ name: CI
 on:
   push:
     branches: [main, dev]
-    paths:
-      - 'packages/contracts/**'
-      - '.github/workflows/ci.yml'
-      - 'Makefile'
   pull_request:
     branches: [main, dev]
-    paths:
-      - 'packages/contracts/**'
-      - '.github/workflows/ci.yml'
-      - 'Makefile'
 
 jobs:
   website:
@@ -121,6 +113,44 @@ jobs:
       - name: Test
         run: go test ./...
 
+  internal-stellar:
+    name: Internal (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for Go module
+        id: check
+        run: |
+          if [ -f "go.mod" ] && [ -d "internal" ]; then
+            echo "has_module=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_module=false" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: actions/setup-go@v5
+        if: steps.check.outputs.has_module == 'true'
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        if: steps.check.outputs.has_module == 'true'
+        run: go test -v -race ./internal/...
+
+      - name: Check formatting
+        if: steps.check.outputs.has_module == 'true'
+        run: |
+          if [ "$(gofmt -s -l ./internal | wc -l)" -gt 0 ]; then
+            echo "Code formatting issues found"
+            gofmt -s -d ./internal
+            exit 1
+          fi
+
+      - name: Run vet
+        if: steps.check.outputs.has_module == 'true'
+        run: go vet ./internal/...
+
   contracts:
     name: Contracts (Rust)
     runs-on: ubuntu-latest
@@ -133,4 +163,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Test contracts
-        run: cargo test -p yield-registry -p allocation-strategy
+        run: cargo test --lib
