@@ -1,5 +1,5 @@
 [package]
-name = "yield-registry-contract"
+name = "vault-contract"
 version = "0.1.0"
 edition = "2021"
 publish = false
