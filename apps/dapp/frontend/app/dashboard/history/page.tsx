@@ -90,18 +90,19 @@ export default function HistoryPage() {
             tx.id, tx.type, tx.amount, tx.asset, tx.vaultName, tx.timestamp, tx.status, tx.txHash
         ]);
         
-        const csvContent = "data:text/csv;charset=utf-8," + 
-            [headers, ...rows].map(row => 
-                row.map(field => `"${String(field).replace(/"/g, '""')}"`).join(",")
-            ).join("\n");
+        const csvContent = [headers, ...rows].map(row => 
+            row.map(field => `"${String(field).replace(/"/g, '""')}"`).join(",")
+        ).join("\n");
         
-        const encodedUri = encodeURI(csvContent);
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
+        link.setAttribute("href", url);
         link.setAttribute("download", `nester_history_${new Date().toISOString().split('T')[0]}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     };
 
     if (!isConnected) return null;
