@@ -57,7 +57,7 @@ function buildId(prefix: string) {
 }
 
 export function NotificationsProvider({ children }: { children: ReactNode }) {
-    // v1: Notifications are client-side only and reset on page reload.
+      // v1: Notifications are client-side only and persisted across page reloads via localStorage.
     const [notifications, setNotifications] =
         useState<AppNotification[]>(INITIAL_NOTIFICATIONS);
     const [toasts, setToasts] = useState<ToastItem[]>([]);
