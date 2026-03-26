@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -60,10 +62,12 @@ func (c *PrometheusClient) GetVaultRecommendations(ctx context.Context, vaultID 
 		return []intelligence.Recommendation{}, nil // Graceful degradation
 	}
 
-	url := fmt.Sprintf("%s/api/v1/vaults/%s/recommendations", c.cfg.BaseURL, vaultID)
+
+	url := fmt.Sprintf("%s/api/v1/vaults/%s/recommendations", c.cfg.BaseURL, url.PathEscape(vaultID))
 	var recs []intelligence.Recommendation
 	err := c.doRequest(ctx, url, &recs)
 	if err != nil {
+		log.Printf("ERROR: prometheus_client request failed for vault %s: %v", vaultID, err)
 		c.recordFailure()
 		return []intelligence.Recommendation{}, nil // Graceful degradation
 	}
@@ -86,6 +90,7 @@ func (c *PrometheusClient) GetMarketSentiment(ctx context.Context) (*intelligenc
 	var report intelligence.SentimentReport
 	err := c.doRequest(ctx, url, &report)
 	if err != nil {
+		log.Printf("ERROR: prometheus_client request failed for market sentiment: %v", err)
 		c.recordFailure()
 		return &intelligence.SentimentReport{}, nil
 	}
@@ -104,10 +109,12 @@ func (c *PrometheusClient) GetPortfolioInsights(ctx context.Context, userID stri
 		return &intelligence.PortfolioInsights{}, nil
 	}
 
-	url := fmt.Sprintf("%s/api/v1/users/%s/insights", c.cfg.BaseURL, userID)
+
+	url := fmt.Sprintf("%s/api/v1/users/%s/insights", c.cfg.BaseURL, url.PathEscape(userID))
 	var insights intelligence.PortfolioInsights
 	err := c.doRequest(ctx, url, &insights)
 	if err != nil {
+		log.Printf("ERROR: prometheus_client request failed for user %s insights: %v", userID, err)
 		c.recordFailure()
 		return &intelligence.PortfolioInsights{}, nil
 	}
