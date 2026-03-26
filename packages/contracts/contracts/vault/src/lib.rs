@@ -206,7 +206,11 @@ impl VaultContract {
 
         user.require_auth();
 
-        let token_address: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        let token_address: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Token)
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
         let contract_address = env.current_contract_address();
 
         token::Client::new(&env, &token_address).transfer(&user, &contract_address, &amount);
@@ -249,7 +253,11 @@ impl VaultContract {
             panic_with_error!(&env, ContractError::InsufficientBalance);
         }
 
-        let token_address: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        let token_address: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Token)
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
         let contract_address = env.current_contract_address();
 
         token::Client::new(&env, &token_address).transfer(&contract_address, &user, &amount);
@@ -300,7 +308,10 @@ impl VaultContract {
 
     pub fn get_token(env: Env) -> Address {
         require_initialized(&env);
-        env.storage().instance().get(&DataKey::Token).unwrap()
+        env.storage()
+            .instance()
+            .get(&DataKey::Token)
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized))
     }
 
     pub fn is_paused(env: Env) -> bool {
