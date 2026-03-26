@@ -2,10 +2,41 @@
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Env,
+    Symbol,
 };
 
 use nester_access_control::{AccessControl, Role};
-use nester_common::ContractError;
+use nester_common::{emit_event, ContractError};
+
+const VAULT: Symbol = symbol_short!("VAULT");
+const DEPOSIT: Symbol = symbol_short!("DEPOSIT");
+const WITHDRAW: Symbol = symbol_short!("WITHDRAW");
+const PAUSE: Symbol = symbol_short!("PAUSE");
+const UNPAUSE: Symbol = symbol_short!("UNPAUSE");
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DepositEventData {
+    pub amount: i128,
+    pub shares_minted: i128,
+    pub new_balance: i128,
+    pub total_deposits: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct WithdrawEventData {
+    pub amount: i128,
+    pub shares_burned: i128,
+    pub new_balance: i128,
+    pub total_deposits: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TimestampEventData {
+    pub timestamp: u64,
+}
 
 // ---------------------------------------------------------------------------
 // Storage
@@ -110,8 +141,15 @@ impl VaultContract {
         env.storage()
             .instance()
             .set(&DataKey::Status, &VaultStatus::Paused);
-        env.events()
-            .publish((symbol_short!("paused"), caller), ());
+        emit_event(
+            &env,
+            VAULT,
+            PAUSE,
+            caller.clone(),
+            TimestampEventData {
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     /// Resume vault operations. Requires [`Role::Admin`].
@@ -122,8 +160,15 @@ impl VaultContract {
         env.storage()
             .instance()
             .set(&DataKey::Status, &VaultStatus::Active);
-        env.events()
-            .publish((symbol_short!("unpaused"), caller), ());
+        emit_event(
+            &env,
+            VAULT,
+            UNPAUSE,
+            caller.clone(),
+            TimestampEventData {
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     /// Grant `role` to `grantee`. Requires caller to be an Admin.
@@ -172,9 +217,17 @@ impl VaultContract {
         let new_total = get_total(&env) + amount;
         set_total(&env, new_total);
 
-        env.events().publish(
-            (symbol_short!("DEPOSIT"), user.clone()),
-            (amount, new_balance),
+        emit_event(
+            &env,
+            VAULT,
+            DEPOSIT,
+            user.clone(),
+            DepositEventData {
+                amount,
+                shares_minted: amount,
+                new_balance,
+                total_deposits: new_total,
+            },
         );
 
         new_balance
@@ -183,6 +236,7 @@ impl VaultContract {
     /// Withdraw funds from the vault.
     pub fn withdraw(env: Env, user: Address, amount: i128) -> i128 {
         require_initialized(&env);
+        require_active(&env);
 
         if amount <= 0 {
             panic_with_error!(&env, ContractError::InvalidAmount);
@@ -206,9 +260,17 @@ impl VaultContract {
         let new_total = get_total(&env) - amount;
         set_total(&env, new_total);
 
-        env.events().publish(
-            (symbol_short!("WITHDRAW"), user.clone()),
-            (amount, new_balance),
+        emit_event(
+            &env,
+            VAULT,
+            WITHDRAW,
+            user.clone(),
+            WithdrawEventData {
+                amount,
+                shares_burned: amount,
+                new_balance,
+                total_deposits: new_total,
+            },
         );
 
         new_balance
