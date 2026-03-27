@@ -14,13 +14,11 @@ import {
     Vault,
 } from "lucide-react";
 
-import { Navbar } from "@/components/navbar";
 import {
     usePortfolio,
     type PortfolioPosition,
 } from "@/components/portfolio-provider";
 import { WithdrawModal } from "@/components/vault-action-modals";
-import { useWallet } from "@/components/wallet-provider";
 import { truncateAddress } from "@/lib/utils";
 
 export default function Dashboard() {
