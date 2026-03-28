@@ -1,10 +1,5 @@
 #![no_std]
 
-extern crate alloc;
-
-use alloc::vec;
-use alloc::vec::Vec as RustVec;
-
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Symbol, Vec,
 };
@@ -177,9 +172,9 @@ impl AllocationStrategyContract {
         let vault_type = Self::get_vault_type(env.clone());
         let params = Self::get_strategy_params(env.clone());
 
-        let mut results = rust_weights_from_entries(&apys);
-        let mut eligible_indices = RustVec::new();
-        let mut scores = RustVec::new();
+        let mut results = zero_weights_from_entries(&env, &apys);
+        let mut eligible_indices = Vec::new(&env);
+        let mut scores = Vec::new(&env);
 
         for (index, entry) in apys.iter().enumerate() {
             let is_registered = registry.has_source(&entry.source_id);
@@ -187,30 +182,31 @@ impl AllocationStrategyContract {
                 && registry.get_source_status(&entry.source_id) == SourceStatus::Active;
 
             if is_active && entry.apy_bps > 0 {
-                eligible_indices.push(index as usize);
+                eligible_indices.push_back(index as u32);
                 let score = match vault_type {
                     VaultType::DeFi500 => 1_i128,
                     _ => entry.apy_bps,
                 };
-                scores.push(score);
+                scores.push_back(score);
             }
         }
 
-        if !eligible_indices.is_empty() {
+        if eligible_indices.len() > 0 {
             let computed = match vault_type {
-                VaultType::DeFi500 => even_distribution(eligible_indices.len()),
+                VaultType::DeFi500 => even_distribution(&env, eligible_indices.len() as usize),
                 _ => proportional_with_cap(&env, &scores, params.max_weight_bps),
             };
 
             for (slot, index) in eligible_indices.iter().enumerate() {
-                results[*index].weight_bps = computed[slot];
+                let mut weight = results.get(index).unwrap();
+                weight.weight_bps = computed.get(slot as u32).unwrap();
+                results.set(index, weight);
             }
         }
 
-        let weights = soroban_weights_from_rust(&env, &results);
-        env.storage().instance().set(&DataKey::Weights, &weights);
-        persist_allocations(&env, total_amount, &weights);
-        weights
+        env.storage().instance().set(&DataKey::Weights, &results);
+        persist_allocations(&env, total_amount, &results);
+        results
     }
 
     pub fn calculate_allocation(env: Env, total: i128) -> Vec<(Symbol, i128)> {
@@ -220,7 +216,7 @@ impl AllocationStrategyContract {
         for (symbol, amount) in allocations.iter() {
             env.storage()
                 .instance()
-                .set(&DataKey::Allocation(symbol.clone()), amount);
+                .set(&DataKey::Allocation(symbol.clone()), &amount);
         }
 
         let mut out = Vec::new(&env);
@@ -236,16 +232,16 @@ impl AllocationStrategyContract {
         target_weights: Vec<AllocationWeight>,
     ) -> bool {
         let threshold = Self::get_strategy_params(env).rebalance_threshold_bps;
-        let mut seen = RustVec::new();
+        let mut seen = Vec::new(&current_weights.env());
 
         for weight in current_weights.iter() {
             if !contains_symbol(&seen, &weight.source_id) {
-                seen.push(weight.source_id.clone());
+                seen.push_back(weight.source_id.clone());
             }
         }
         for weight in target_weights.iter() {
             if !contains_symbol(&seen, &weight.source_id) {
-                seen.push(weight.source_id.clone());
+                seen.push_back(weight.source_id.clone());
             }
         }
 
@@ -316,83 +312,100 @@ fn default_strategy_params(vault_type: &VaultType) -> StrategyParams {
 fn build_default_weights(env: &Env, registry_id: &Address, vault_type: &VaultType) -> Vec<AllocationWeight> {
     let registry = YieldRegistryContractClient::new(env, registry_id);
     let active_sources = registry.get_active_sources();
-    let mut source_ids = RustVec::new();
+    let mut source_ids = Vec::new(env);
 
     for source in active_sources.iter() {
-        source_ids.push(source.id);
+        source_ids.push_back(source.id);
     }
 
     let distribution = match vault_type {
-        VaultType::Conservative => template_distribution(source_ids.len(), &[5_000, 3_000, 2_000]),
-        VaultType::Balanced => template_distribution(source_ids.len(), &[4_000, 3_500, 2_500]),
-        VaultType::Growth => template_distribution(source_ids.len(), &[2_000, 3_000, 5_000]),
-        VaultType::DeFi500 => even_distribution(source_ids.len()),
+        VaultType::Conservative => template_distribution(env, source_ids.len() as usize, &[5_000, 3_000, 2_000]),
+        VaultType::Balanced => template_distribution(env, source_ids.len() as usize, &[4_000, 3_500, 2_500]),
+        VaultType::Growth => template_distribution(env, source_ids.len() as usize, &[2_000, 3_000, 5_000]),
+        VaultType::DeFi500 => even_distribution(env, source_ids.len() as usize),
     };
 
     let mut out = Vec::new(env);
-    for (index, source_id) in source_ids.into_iter().enumerate() {
+    for (index, source_id) in source_ids.iter().enumerate() {
         out.push_back(AllocationWeight {
             source_id,
-            weight_bps: distribution[index],
+            weight_bps: distribution.get(index as u32).unwrap(),
         });
     }
 
     out
 }
 
-fn template_distribution(count: usize, template: &[u32]) -> RustVec<u32> {
+fn template_distribution(env: &Env, count: usize, template: &[u32]) -> Vec<u32> {
     if count == 0 {
-        return RustVec::new();
+        return Vec::new(env);
     }
     if count == 1 {
-        return vec![BASIS_POINT_SCALE];
+        let mut out = Vec::new(env);
+        out.push_back(BASIS_POINT_SCALE);
+        return out;
     }
     if count == 2 {
-        return vec![template[0] + (template[1] / 2), template[2] + (template[1] / 2)];
+        let mut out = Vec::new(env);
+        out.push_back(template[0] + (template[1] / 2));
+        out.push_back(template[2] + (template[1] / 2));
+        return out;
     }
 
-    let mut out = vec![0_u32; count];
-    out[0] = template[0];
-    out[1] = template[1];
-    out[2] = template[2];
+    let mut out = Vec::new(env);
+    for _ in 0..count {
+        out.push_back(0_u32);
+    }
+    out.set(0, template[0]);
+    out.set(1, template[1]);
+    out.set(2, template[2]);
     out
 }
 
-fn even_distribution(count: usize) -> RustVec<u32> {
+fn even_distribution(env: &Env, count: usize) -> Vec<u32> {
     if count == 0 {
-        return RustVec::new();
+        return Vec::new(env);
     }
 
     let base = BASIS_POINT_SCALE / count as u32;
     let remainder = BASIS_POINT_SCALE % count as u32;
-    let mut out = vec![base; count];
+    let mut out = Vec::new(env);
 
-    for weight in out.iter_mut().take(remainder as usize) {
-        *weight += 1;
+    for _ in 0..count {
+        out.push_back(base);
+    }
+
+    for index in 0..remainder {
+        let weight = out.get(index).unwrap();
+        out.set(index, weight + 1);
     }
 
     out
 }
 
-fn proportional_with_cap(env: &Env, scores: &[i128], max_weight_bps: u32) -> RustVec<u32> {
-    if scores.is_empty() {
-        return RustVec::new();
+fn proportional_with_cap(env: &Env, scores: &Vec<i128>, max_weight_bps: u32) -> Vec<u32> {
+    if scores.len() == 0 {
+        return Vec::new(env);
     }
 
-    if max_weight_bps as usize * scores.len() < BASIS_POINT_SCALE as usize {
+    if max_weight_bps as usize * (scores.len() as usize) < BASIS_POINT_SCALE as usize {
         panic_with_error!(env, ContractError::AllocationError);
     }
 
     let len = scores.len();
-    let mut assigned = vec![0_u32; len];
-    let mut active = vec![true; len];
+    let mut assigned = Vec::new(env);
+    let mut active = Vec::new(env);
+    for _ in 0..len {
+        assigned.push_back(0_u32);
+        active.push_back(true);
+    }
     let mut remaining_total = BASIS_POINT_SCALE;
 
     while remaining_total > 0 {
         let mut total_score = 0_i128;
         for index in 0..len {
-            if active[index] {
-                total_score += scores[index];
+            if active.get(index).unwrap() {
+                total_score += scores.get(index).unwrap();
             }
         }
 
@@ -402,26 +415,31 @@ fn proportional_with_cap(env: &Env, scores: &[i128], max_weight_bps: u32) -> Rus
 
         let snapshot_remaining = remaining_total;
 
-        let mut floors = vec![0_u32; len];
-        let mut remainders = vec![0_i128; len];
+        let mut floors = Vec::new(env);
+        let mut remainders = Vec::new(env);
+        for _ in 0..len {
+            floors.push_back(0_u32);
+            remainders.push_back(0_i128);
+        }
         let mut capped_any = false;
 
         for index in 0..len {
-            if !active[index] {
+            if !active.get(index).unwrap() {
                 continue;
             }
 
-            let capacity = max_weight_bps - assigned[index];
-            let numerator = scores[index] * snapshot_remaining as i128;
+            let current_assigned = assigned.get(index).unwrap();
+            let capacity = max_weight_bps - current_assigned;
+            let numerator = scores.get(index).unwrap() * snapshot_remaining as i128;
             let floor = (numerator / total_score) as u32;
             let ceil = ((numerator + total_score - 1) / total_score) as u32;
-            floors[index] = floor;
-            remainders[index] = numerator % total_score;
+            floors.set(index, floor);
+            remainders.set(index, numerator % total_score);
 
             if ceil >= capacity {
-                assigned[index] += capacity;
+                assigned.set(index, current_assigned + capacity);
                 remaining_total -= capacity;
-                active[index] = false;
+                active.set(index, false);
                 capped_any = true;
             }
         }
@@ -432,11 +450,12 @@ fn proportional_with_cap(env: &Env, scores: &[i128], max_weight_bps: u32) -> Rus
 
         let mut distributed = 0_u32;
         for index in 0..len {
-            if !active[index] {
+            if !active.get(index).unwrap() {
                 continue;
             }
-            assigned[index] += floors[index];
-            distributed += floors[index];
+            let floor = floors.get(index).unwrap();
+            assigned.set(index, assigned.get(index).unwrap() + floor);
+            distributed += floor;
         }
 
         remaining_total -= distributed;
@@ -446,18 +465,19 @@ fn proportional_with_cap(env: &Env, scores: &[i128], max_weight_bps: u32) -> Rus
             let mut best_remainder = -1_i128;
 
             for index in 0..len {
-                if !active[index] || assigned[index] >= max_weight_bps {
+                if !active.get(index).unwrap() || assigned.get(index).unwrap() >= max_weight_bps {
                     continue;
                 }
-                if remainders[index] > best_remainder {
-                    best_remainder = remainders[index];
+                let remainder = remainders.get(index).unwrap();
+                if remainder > best_remainder {
+                    best_remainder = remainder;
                     best_index = Some(index);
                 }
             }
 
             match best_index {
                 Some(index) => {
-                    assigned[index] += 1;
+                    assigned.set(index, assigned.get(index).unwrap() + 1);
                     remaining_total -= 1;
                 }
                 None => break,
@@ -470,21 +490,13 @@ fn proportional_with_cap(env: &Env, scores: &[i128], max_weight_bps: u32) -> Rus
     assigned
 }
 
-fn rust_weights_from_entries(apys: &Vec<SourceApy>) -> RustVec<AllocationWeight> {
-    let mut out = RustVec::new();
+fn zero_weights_from_entries(env: &Env, apys: &Vec<SourceApy>) -> Vec<AllocationWeight> {
+    let mut out = Vec::new(env);
     for entry in apys.iter() {
-        out.push(AllocationWeight {
+        out.push_back(AllocationWeight {
             source_id: entry.source_id,
             weight_bps: 0,
         });
-    }
-    out
-}
-
-fn soroban_weights_from_rust(env: &Env, weights: &[AllocationWeight]) -> Vec<AllocationWeight> {
-    let mut out = Vec::new(env);
-    for weight in weights {
-        out.push_back(weight.clone());
     }
     out
 }
@@ -505,9 +517,10 @@ fn persist_allocations(env: &Env, total_amount: i128, weights: &Vec<AllocationWe
     }
 }
 
-fn allocation_amounts(weights: &Vec<AllocationWeight>, total_amount: i128) -> RustVec<(Symbol, i128)> {
+fn allocation_amounts(weights: &Vec<AllocationWeight>, total_amount: i128) -> Vec<(Symbol, i128)> {
     let scale = BASIS_POINT_SCALE as i128;
-    let mut out = RustVec::new();
+    let env = weights.env();
+    let mut out = Vec::new(&env);
     let mut total_allocated = 0_i128;
     let mut max_index = None;
     let mut max_weight = 0_u32;
@@ -519,22 +532,23 @@ fn allocation_amounts(weights: &Vec<AllocationWeight>, total_amount: i128) -> Ru
             max_weight = weight.weight_bps;
             max_index = Some(index as usize);
         }
-        out.push((weight.source_id, amount));
+        out.push_back((weight.source_id, amount));
     }
 
     if let Some(index) = max_index {
         let remainder = total_amount - total_allocated;
         if remainder > 0 {
-            out[index].1 += remainder;
+            let (symbol, amount) = out.get(index as u32).unwrap();
+            out.set(index as u32, (symbol, amount + remainder));
         }
     }
 
     out
 }
 
-fn contains_symbol(symbols: &[Symbol], target: &Symbol) -> bool {
+fn contains_symbol(symbols: &Vec<Symbol>, target: &Symbol) -> bool {
     for symbol in symbols {
-        if symbol == target {
+        if symbol == *target {
             return true;
         }
     }
