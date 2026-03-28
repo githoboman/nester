@@ -38,7 +38,10 @@ func NewPostgresDB(cfg config.DatabaseConfig) (*PostgresDB, error) {
 		return nil, fmt.Errorf("unable to create connection pool: %w", err)
 	}
 
-	if err := pool.Ping(ctx); err != nil {
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), cfg.ConnectionTimeout())
+	defer pingCancel()
+
+	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("unable to ping database: %w", err)
 	}
