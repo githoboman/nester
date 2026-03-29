@@ -32,6 +32,7 @@ const REGISTRY: Symbol = symbol_short!("REGISTRY");
 const SOURCE_ADDED: Symbol = symbol_short!("SRC_ADD");
 const SOURCE_UPDATED: Symbol = symbol_short!("SRC_UPD");
 const SOURCE_REMOVED: Symbol = symbol_short!("SRC_REM");
+const SOURCE_APY_UPDATED: Symbol = symbol_short!("APY_UPD");
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -47,6 +48,14 @@ pub struct SourceUpdatedEventData {
     pub new_status: SourceStatus,
 }
 
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SourceAPYUpdatedEventData {
+    pub old_apy_bps: u32,
+    pub new_apy_bps: u32,
+    pub updated_at: u64,
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -60,6 +69,10 @@ pub struct YieldSource {
     pub contract_address: Address,
     pub protocol_type: ProtocolType,
     pub status: SourceStatus,
+    /// Current APY in basis points.
+    pub apy_bps: u32,
+    /// Ledger timestamp of the last APY update.
+    pub apy_updated_at: u64,
     /// Ledger timestamp at registration time.
     pub added_at: u64,
 }
@@ -125,6 +138,8 @@ impl YieldRegistryContract {
             contract_address: contract_address.clone(),
             protocol_type: protocol_type.clone(),
             status: SourceStatus::Active,
+            apy_bps: 0,
+            apy_updated_at: 0,
             added_at: env.ledger().timestamp(),
         };
 
@@ -144,6 +159,35 @@ impl YieldRegistryContract {
             SourceAddedEventData {
                 contract_address,
                 protocol_type,
+            },
+        );
+    }
+
+    /// Update APY for an existing source.
+    ///
+    /// Caller must hold Admin or Operator role.
+    pub fn update_apy(env: Env, caller: Address, id: Symbol, apy_bps: u32) {
+        caller.require_auth();
+        require_admin_or_operator(&env, &caller);
+
+        let mut source = get_source_or_panic(&env, &id);
+        let old_apy_bps = source.apy_bps;
+        let now = env.ledger().timestamp();
+        source.apy_bps = apy_bps;
+        source.apy_updated_at = now;
+        env.storage()
+            .instance()
+            .set(&DataKey::Source(id.clone()), &source);
+
+        emit_event_with_sym(
+            &env,
+            REGISTRY,
+            SOURCE_APY_UPDATED,
+            id,
+            SourceAPYUpdatedEventData {
+                old_apy_bps,
+                new_apy_bps: apy_bps,
+                updated_at: now,
             },
         );
     }
@@ -251,6 +295,44 @@ impl YieldRegistryContract {
         get_source_or_panic(&env, &id).status
     }
 
+    /// Return the current APY (basis points) for `id`.
+    pub fn get_source_apy(env: Env, id: Symbol) -> u32 {
+        get_source_or_panic(&env, &id).apy_bps
+    }
+
+    /// Return `true` when APY data for `id` is stale by `max_age_secs`.
+    ///
+    /// A source with no APY update yet (`apy_updated_at == 0`) is always stale.
+    pub fn is_source_apy_stale(env: Env, id: Symbol, max_age_secs: u64) -> bool {
+        let source = get_source_or_panic(&env, &id);
+        if source.apy_updated_at == 0 {
+            return true;
+        }
+        env.ledger().timestamp() > source.apy_updated_at.saturating_add(max_age_secs)
+    }
+
+    /// Return all registered sources whose APY is stale by `max_age_secs`.
+    pub fn get_stale_sources(env: Env, max_age_secs: u64) -> Vec<YieldSource> {
+        let list = source_list(&env);
+        let now = env.ledger().timestamp();
+        let mut out = Vec::<YieldSource>::new(&env);
+
+        for sym in list.iter() {
+            if let Some(s) = env
+                .storage()
+                .instance()
+                .get::<DataKey, YieldSource>(&DataKey::Source(sym))
+            {
+                let stale = s.apy_updated_at == 0
+                    || now > s.apy_updated_at.saturating_add(max_age_secs);
+                if stale {
+                    out.push_back(s);
+                }
+            }
+        }
+        out
+    }
+
     // -----------------------------------------------------------------------
     // Role management — delegates to nester_access_control
     // -----------------------------------------------------------------------
@@ -293,6 +375,14 @@ fn get_source_or_panic(env: &Env, id: &Symbol) -> YieldSource {
         .instance()
         .get::<DataKey, YieldSource>(&DataKey::Source(id.clone()))
         .unwrap_or_else(|| panic_with_error!(env, ContractError::StrategyNotFound))
+}
+
+fn require_admin_or_operator(env: &Env, caller: &Address) {
+    if !AccessControl::has_role(env, caller, Role::Admin)
+        && !AccessControl::has_role(env, caller, Role::Operator)
+    {
+        panic_with_error!(env, ContractError::Unauthorized);
+    }
 }
 
 // ---------------------------------------------------------------------------

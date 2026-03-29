@@ -4,6 +4,7 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Env,
     IntoVal, Symbol,
 };
+use vault_token::VaultTokenContractClient;
 
 use nester_access_control::{AccessControl, Role};
 use nester_common::{emit_event, ContractError};
@@ -134,9 +135,8 @@ pub enum VaultStatus {
 #[derive(Clone)]
 enum DataKey {
     Token,
+    VaultToken,
     Status,
-    Balance(Address), // Stores shares
-    TotalShares,      // Stores total shares in circulation
     TotalAssets,      // Stores total assets (tokens) in vault (pre-fee)
     FeeConfig,
     LastFeeAccrual,
@@ -177,28 +177,24 @@ fn is_paused(env: &Env) -> bool {
         .unwrap_or(true)
 }
 
-fn get_shares(env: &Env, user: &Address) -> i128 {
+fn get_vault_token(env: &Env) -> Address {
     env.storage()
-        .persistent()
-        .get(&DataKey::Balance(user.clone()))
-        .unwrap_or(0)
+        .instance()
+        .get(&DataKey::VaultToken)
+        .unwrap_or_else(|| panic_with_error!(env, ContractError::NotInitialized))
 }
 
-fn set_shares(env: &Env, user: &Address, amount: i128) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::Balance(user.clone()), &amount);
+fn vault_token_client(env: &Env) -> VaultTokenContractClient {
+    let vault_token = get_vault_token(env);
+    VaultTokenContractClient::new(env, &vault_token)
 }
 
 fn get_total_shares(env: &Env) -> i128 {
-    env.storage()
-        .instance()
-        .get(&DataKey::TotalShares)
-        .unwrap_or(0)
+    vault_token_client(env).total_supply()
 }
 
-fn set_total_shares(env: &Env, amount: i128) {
-    env.storage().instance().set(&DataKey::TotalShares, &amount);
+fn get_shares(env: &Env, user: &Address) -> i128 {
+    vault_token_client(env).balance(user)
 }
 
 fn get_total_assets(env: &Env) -> i128 {
@@ -210,6 +206,13 @@ fn get_total_assets(env: &Env) -> i128 {
 
 fn set_total_assets(env: &Env, amount: i128) {
     env.storage().instance().set(&DataKey::TotalAssets, &amount);
+}
+
+fn sync_vault_token_total_assets(env: &Env) {
+    let gross = get_total_assets(env);
+    let accrued = get_accrued_fees(env);
+    let net_assets = if gross > accrued { gross - accrued } else { 0 };
+    vault_token_client(env).set_total_assets(&net_assets);
 }
 
 fn get_accrued_fees(env: &Env) -> i128 {
@@ -290,6 +293,7 @@ fn accrue_management_fee(env: &Env) {
         if fee > 0 {
             let accrued = get_accrued_fees(env);
             set_accrued_fees(env, accrued + fee);
+            sync_vault_token_total_assets(env);
         }
         env.storage().instance().set(&DataKey::LastFeeAccrual, &now);
     }

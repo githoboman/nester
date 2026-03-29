@@ -3,11 +3,12 @@
 extern crate std;
 
 use soroban_sdk::{
-    testutils::{Address as _, Events},
-    Address, Env, Symbol,
+    testutils::{Address as _, Events, Ledger},
+    Address, Env, LedgerInfo, Symbol,
 };
 
 use crate::{ProtocolType, SourceStatus, YieldRegistryContract, YieldRegistryContractClient};
+use nester_access_control::Role;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,6 +28,20 @@ fn aave_id(env: &Env) -> Symbol {
 }
 fn blend_id(env: &Env) -> Symbol {
     Symbol::new(env, "blend")
+}
+
+fn set_timestamp(env: &Env, ts: u64) {
+    let current = env.ledger().get();
+    env.ledger().set(LedgerInfo {
+        timestamp: ts,
+        protocol_version: current.protocol_version,
+        sequence_number: current.sequence_number,
+        network_id: current.network_id,
+        base_reserve: current.base_reserve,
+        min_temp_entry_ttl: current.min_temp_entry_ttl,
+        min_persistent_entry_ttl: current.min_persistent_entry_ttl,
+        max_entry_ttl: current.max_entry_ttl,
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +80,8 @@ fn register_source_creates_active_record() {
     assert_eq!(s.status, SourceStatus::Active);
     assert_eq!(s.protocol_type, ProtocolType::Lending);
     assert_eq!(s.contract_address, addr);
+    assert_eq!(s.apy_bps, 0);
+    assert_eq!(s.apy_updated_at, 0);
 }
 
 #[test]
@@ -276,6 +293,114 @@ fn non_admin_cannot_update_status() {
 }
 
 // ---------------------------------------------------------------------------
+// update_apy
+// ---------------------------------------------------------------------------
+
+#[test]
+fn operator_can_update_apy() {
+    let env = Env::default();
+    let (client, admin) = setup(&env);
+    let operator = Address::generate(&env);
+
+    client.register_source(
+        &admin,
+        &aave_id(&env),
+        &Address::generate(&env),
+        &ProtocolType::Lending,
+    );
+    client.grant_role(&admin, &operator, &Role::Operator);
+    set_timestamp(&env, 1_700_000_000);
+
+    client.update_apy(&operator, &aave_id(&env), &725);
+
+    let source = client.get_source(&aave_id(&env));
+    assert_eq!(source.apy_bps, 725);
+    assert_eq!(source.apy_updated_at, 1_700_000_000);
+    assert_eq!(client.get_source_apy(&aave_id(&env)), 725);
+}
+
+#[test]
+fn admin_can_update_apy() {
+    let env = Env::default();
+    let (client, admin) = setup(&env);
+
+    client.register_source(
+        &admin,
+        &aave_id(&env),
+        &Address::generate(&env),
+        &ProtocolType::Lending,
+    );
+
+    client.update_apy(&admin, &aave_id(&env), &640);
+    assert_eq!(client.get_source_apy(&aave_id(&env)), 640);
+}
+
+#[test]
+#[should_panic]
+fn non_operator_non_admin_cannot_update_apy() {
+    let env = Env::default();
+    let (client, admin) = setup(&env);
+    let outsider = Address::generate(&env);
+
+    client.register_source(
+        &admin,
+        &aave_id(&env),
+        &Address::generate(&env),
+        &ProtocolType::Lending,
+    );
+    client.update_apy(&outsider, &aave_id(&env), &600);
+}
+
+#[test]
+fn source_is_stale_before_first_apy_update() {
+    let env = Env::default();
+    let (client, admin) = setup(&env);
+
+    client.register_source(
+        &admin,
+        &aave_id(&env),
+        &Address::generate(&env),
+        &ProtocolType::Lending,
+    );
+
+    assert!(client.is_source_apy_stale(&aave_id(&env), &3600));
+}
+
+#[test]
+fn stale_source_query_respects_threshold() {
+    let env = Env::default();
+    let (client, admin) = setup(&env);
+
+    client.register_source(
+        &admin,
+        &aave_id(&env),
+        &Address::generate(&env),
+        &ProtocolType::Lending,
+    );
+    client.register_source(
+        &admin,
+        &blend_id(&env),
+        &Address::generate(&env),
+        &ProtocolType::Lending,
+    );
+
+    set_timestamp(&env, 1_700_000_000);
+    client.update_apy(&admin, &aave_id(&env), &450);
+
+    set_timestamp(&env, 1_700_003_590);
+    client.update_apy(&admin, &blend_id(&env), &500);
+
+    // 1_700_003_700 - aave update = 3700s (stale if max_age=3600)
+    // 1_700_003_700 - blend update = 110s  (fresh)
+    set_timestamp(&env, 1_700_003_700);
+    let stale = client.get_stale_sources(&3600);
+    assert_eq!(stale.len(), 1);
+    assert_eq!(stale.get(0).unwrap().id, aave_id(&env));
+    assert!(client.is_source_apy_stale(&aave_id(&env), &3600));
+    assert!(!client.is_source_apy_stale(&blend_id(&env), &3600));
+}
+
+// ---------------------------------------------------------------------------
 // get_active_sources
 // ---------------------------------------------------------------------------
 
@@ -476,4 +601,3 @@ fn get_source_status_reflects_current_status() {
         SourceStatus::Paused
     );
 }
-
