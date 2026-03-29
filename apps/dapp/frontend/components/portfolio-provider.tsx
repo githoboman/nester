@@ -80,12 +80,16 @@ interface PortfolioState {
     getWithdrawalQuote: (positionId: string, grossAmount: number) => WithdrawalQuote | null;
     recordDeposit: (input: DepositInput) => void;
     recordWithdrawal: (input: WithdrawalInput) => WithdrawalQuote | null;
+    /** Push a live balance update from WebSocket events */
+    applyBalanceUpdate: (asset: string, newBalance: number) => void;
+    /** Push a live yield accrual delta from WebSocket events */
+    applyYieldAccrual: (positionId: string, deltaYield: number) => void;
 }
 
 const defaultBalances = {
-    USDC: 10000,
-    USDT: 2500,
-    XLM: 850,
+    USDC: 0,
+    USDT: 0,
+    XLM: 0,
 };
 
 const PortfolioContext = createContext<PortfolioState | null>(null);
@@ -207,6 +211,21 @@ function PortfolioStore({
     );
 
     const getAvailableBalance = (asset = "USDC") => balances[asset] ?? 0;
+
+    // WebSocket live-update helpers — additive only, existing flow unchanged.
+    const applyBalanceUpdate = (asset: string, newBalance: number) => {
+        setBalances((current) => ({ ...current, [asset]: newBalance }));
+    };
+
+    const applyYieldAccrual = (positionId: string, deltaYield: number) => {
+        setStoredPositions((current) =>
+            current.map((position) =>
+                position.id === positionId
+                    ? { ...position, principal: position.principal + deltaYield }
+                    : position
+            )
+        );
+    };
 
     const getWithdrawalQuote = (positionId: string, grossAmount: number) => {
         const position = positions.find((item) => item.id === positionId);
@@ -331,6 +350,8 @@ function PortfolioStore({
                 getWithdrawalQuote,
                 recordDeposit,
                 recordWithdrawal,
+                applyBalanceUpdate,
+                applyYieldAccrual,
             }}
         >
             {children}
@@ -344,10 +365,6 @@ export function usePortfolio() {
         throw new Error("usePortfolio must be used within PortfolioProvider");
     }
     return context;
-}
-
-export function getExplorerUrl(txHash: string) {
-    return `https://stellar.expert/explorer/testnet/tx/${txHash}`;
 }
 
 export function getVaultForPosition(position: PortfolioPosition) {
