@@ -379,3 +379,27 @@ fn late_depositor_does_not_capture_prior_yield() {
     let bob_out = h.token().burn_for_withdrawal(&bob, &10_000_i128);
     assert_eq!(bob_out, 12_000, "bob receives exactly what he deposited");
 }
+
+// ---------------------------------------------------------------------------
+// Scenario 7 — Vault <-> VaultToken integration
+// ---------------------------------------------------------------------------
+
+/// Vault deposits must mint vault-token shares, and withdrawals must burn them.
+#[test]
+fn vault_deposit_and_withdraw_syncs_vault_token_supply() {
+    let h = NesterHarness::setup();
+    let user = h.create_user();
+
+    h.mint_deposit_tokens(&user, 2_000);
+    let user_shares = h.vault().deposit(&user, &1_000);
+    assert_eq!(user_shares, 1_000);
+    assert_eq!(h.token().balance(&user), 1_000);
+    assert_eq!(h.token().total_supply(), 1_000);
+    assert_eq!(h.token().total_assets(), 1_000);
+
+    // Partial withdraw burns shares in the vault-token contract.
+    let remaining = h.vault().withdraw(&user, &400);
+    assert_eq!(remaining, 600);
+    assert_eq!(h.token().balance(&user), 600);
+    assert_eq!(h.token().total_supply(), 600);
+}
