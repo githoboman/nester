@@ -95,12 +95,16 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
             });
 
             if (valid.length > 0) {
-                setNotifications(valid);
+                // To avoid calling setState() directly within an effect without condition
+                if (JSON.stringify(valid) !== JSON.stringify(notifications)) {
+                    const timer = setTimeout(() => { setNotifications(valid); }, 0);
+                    return () => clearTimeout(timer);
+                }
             }
         } catch {
             window.localStorage.removeItem(NOTIFICATIONS_STORAGE_KEY);
         }
-    }, []);
+    }, [notifications]);
 
     useEffect(() => {
         if (typeof window === "undefined") {
