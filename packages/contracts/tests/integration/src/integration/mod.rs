@@ -1,3 +1,4 @@
+// CI trigger: update from 0xDeon fork
 // ---------------------------------------------------------------------------
 // Nester Protocol — Multi-Contract Integration Tests
 //
