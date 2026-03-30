@@ -177,16 +177,20 @@ test.describe("Vault Withdrawal Flow (matured position)", () => {
         // "Matured - no penalty applies" text
         await expect(page.getByText(/Matured.*no penalty applies/i)).toBeVisible();
 
-        // Green "Penalty free" badge
-        await expect(page.getByText("Penalty free")).toBeVisible();
+        // Green "Penalty free" badge — exact:true to avoid matching the
+        // dashboard card text "Matured and penalty free" (substring) which is
+        // also visible in the DOM behind the open modal.
+        await expect(page.getByText("Penalty free", { exact: true })).toBeVisible();
     });
 
     test("full withdrawal from matured position removes position card", async ({ page }) => {
         await page.goto("/dashboard");
         await page.getByRole("button", { name: /Withdraw/i }).first().click();
 
-        // Withdraw the full position
+        // Withdraw the full position — wait for Max to populate the input
+        // before clicking Confirm, otherwise the button stays disabled.
         await page.getByRole("button", { name: "Max" }).first().click();
+        await expect(page.getByRole("button", { name: /Confirm Withdrawal/i })).toBeEnabled();
         await page.getByRole("button", { name: /Confirm Withdrawal/i }).click();
         await expect(page.getByText("Withdrawal confirmed")).toBeVisible({ timeout: 15_000 });
         await page.getByRole("button", { name: /Close/i }).click();
