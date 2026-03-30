@@ -219,30 +219,3 @@ test.describe("Vault Deposit Flow", () => {
     });
 });
 
-/**
- * Mobile viewport: deposit flow on iPhone 13
- * Playwright config restricts the "mobile" project to this file.
- */
-test.describe("Vault Deposit Flow (mobile viewport)", () => {
-    test.use({ ...devices["iPhone 13"] });
-
-    test("deposit modal is usable on mobile screen", async ({ page }) => {
-        await injectWalletSession(page, TEST_ADDRESS);
-
-        const vaultsPage = new VaultsPage(page);
-        await vaultsPage.goto();
-        await vaultsPage.waitForLoad();
-
-        // Vault cards should be in single-column layout on mobile
-        const vaultCards = page.locator("h3", { hasText: "Conservative" });
-        await expect(vaultCards).toBeVisible();
-
-        await vaultsPage.openDepositModal("Conservative");
-
-        // Modal input must be scrollable / reachable
-        await vaultsPage.depositAmountInput.fill("250");
-        await expect(vaultsPage.confirmDepositButton).toBeEnabled();
-        await vaultsPage.confirmDepositButton.click();
-        await vaultsPage.waitForDepositSuccess();
-    });
-});

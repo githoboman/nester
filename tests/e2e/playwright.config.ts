@@ -26,8 +26,10 @@ export default defineConfig({
         {
             name: "mobile",
             use: { ...devices["iPhone 13"] },
-            // Only run the deposit flow on mobile to keep CI fast
-            testMatch: ["**/vault-deposit.spec.ts"],
+            // Only run the mobile-specific file to keep CI fast.
+            // test.use() with a device must be top-level, not inside describe —
+            // so the mobile test lives in its own dedicated spec file.
+            testMatch: ["**/vault-deposit-mobile.spec.ts"],
         },
     ],
     // Only spin up the dev server locally — CI uses Docker Compose
