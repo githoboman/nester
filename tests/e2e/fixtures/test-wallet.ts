@@ -2,18 +2,26 @@ import { type Page, type BrowserContext } from "@playwright/test";
 
 /**
  * A fake Stellar address used across all E2E tests.
- * The portfolio provider seeds 10,000 USDC for any connected address,
- * so tests can deposit/withdraw without needing a real wallet extension.
+ * The portfolio provider seeds 10,000 USDC for any connected address.
  */
 export const TEST_ADDRESS =
     "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
 
 /**
- * Injects a mock wallet session into localStorage so the WalletProvider
- * treats the browser as already connected — no extension popup needed.
+ * Injects a mock wallet session so WalletProvider treats the browser as
+ * already connected — no real wallet extension required.
  *
- * The provider reads `nester_wallet_id` and `nester_wallet_addr` on mount
- * and restores the session without calling the wallet extension.
+ * HOW IT WORKS
+ * ─────────────
+ * WalletProvider checks `window.__e2e_wallet__` at the top of its initKit()
+ * function (before any real wallet-kit calls).  If the hook is present it
+ * sets address/walletId directly and returns, skipping all extension calls.
+ *
+ * We also write localStorage (nester_wallet_id / nester_wallet_addr) so the
+ * portfolio provider can key its per-address storage correctly.
+ *
+ * Both writes happen via page.addInitScript, which Playwright runs before any
+ * page JavaScript — so the hook is always visible when React mounts.
  */
 export async function injectWalletSession(
     page: Page,
@@ -21,6 +29,12 @@ export async function injectWalletSession(
 ): Promise<void> {
     await page.addInitScript(
         ({ addr, walletId }: { addr: string; walletId: string }) => {
+            // Hook read by WalletProvider to bypass the real wallet kit.
+            (window as unknown as Record<string, unknown>).__e2e_wallet__ = {
+                address: addr,
+                walletId,
+            };
+            // Portfolio provider keys its localStorage store by address.
             window.localStorage.setItem("nester_wallet_id", walletId);
             window.localStorage.setItem("nester_wallet_addr", addr);
         },
@@ -31,8 +45,6 @@ export async function injectWalletSession(
 /**
  * Seeds an existing vault position into localStorage so withdrawal tests
  * can run without going through the full deposit flow first.
- *
- * Mirrors the StoredPosition shape used by PortfolioProvider.
  */
 export async function seedVaultPosition(
     page: Page,
@@ -60,7 +72,11 @@ export async function seedVaultPosition(
         }) => {
             const existing = window.localStorage.getItem(key);
             const state = existing
-                ? JSON.parse(existing)
+                ? (JSON.parse(existing) as {
+                      balances: Record<string, number>;
+                      positions: unknown[];
+                      transactions: unknown[];
+                  })
                 : { balances, positions: [], transactions: [] };
 
             state.positions = [position, ...(state.positions ?? [])];
@@ -85,15 +101,19 @@ function buildPosition(
         matured?: boolean;
     }
 ): Record<string, unknown> {
-    const vaultMeta: Record<string, { name: string; lockDays: number; apy: number; penalty: number }> = {
-        conservative: { name: "Conservative", lockDays: 30, apy: 0.07, penalty: 0.1 },
-        balanced:     { name: "Balanced",     lockDays: 45, apy: 0.095, penalty: 0.1 },
-        growth:       { name: "Growth",       lockDays: 60, apy: 0.13, penalty: 0.1 },
-        defi500:      { name: "DeFi500 Index",lockDays: 90, apy: 0.108, penalty: 0.1 },
+    const vaultMeta: Record<
+        string,
+        { name: string; lockDays: number; apy: number; penalty: number }
+    > = {
+        conservative: { name: "Conservative",  lockDays: 30, apy: 0.07,  penalty: 0.1 },
+        balanced:     { name: "Balanced",      lockDays: 45, apy: 0.095, penalty: 0.1 },
+        growth:       { name: "Growth",        lockDays: 60, apy: 0.13,  penalty: 0.1 },
+        defi500:      { name: "DeFi500 Index", lockDays: 90, apy: 0.108, penalty: 0.1 },
     };
 
     const meta = vaultMeta[opts.vaultId] ?? vaultMeta.conservative;
-    const depositedDaysAgo = opts.depositedDaysAgo ?? (opts.matured ? meta.lockDays + 5 : 10);
+    const depositedDaysAgo =
+        opts.depositedDaysAgo ?? (opts.matured ? meta.lockDays + 5 : 10);
 
     const now = new Date();
     const depositedAt = new Date(now);
@@ -118,9 +138,10 @@ function buildPosition(
 
 /**
  * Clears all Nester localStorage keys to give each test a clean slate.
- * Call this in beforeEach when tests must not share portfolio state.
  */
-export async function clearWalletSession(context: BrowserContext): Promise<void> {
+export async function clearWalletSession(
+    context: BrowserContext
+): Promise<void> {
     await context.addInitScript(() => {
         const keysToRemove: string[] = [];
         for (let i = 0; i < window.localStorage.length; i++) {

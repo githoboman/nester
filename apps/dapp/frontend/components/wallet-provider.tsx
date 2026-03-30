@@ -73,6 +73,31 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         if (typeof window === "undefined") return;
 
         const initKit = async () => {
+            // E2E test bypass: if the page has injected a mock wallet session
+            // via window.__e2e_wallet__, restore it directly without calling
+            // the real wallet kit (which requires a browser extension).
+            const e2eWallet = (window as unknown as Record<string, unknown>)
+                .__e2e_wallet__ as
+                | { address: string; walletId: string }
+                | undefined;
+            if (e2eWallet?.address && e2eWallet?.walletId) {
+                setAddress(e2eWallet.address);
+                setSelectedWalletId(e2eWallet.walletId);
+                setWallets([
+                    {
+                        id: e2eWallet.walletId,
+                        name: "Freighter",
+                        icon: "",
+                        url: "https://freighter.app",
+                        installUrl: "https://freighter.app",
+                        isAvailable: true,
+                    },
+                ]);
+                setWalletsLoaded(true);
+                setKitReady(true);
+                return;
+            }
+
             try {
                 const { StellarWalletsKit } = await import(
                     "@creit.tech/stellar-wallets-kit"
