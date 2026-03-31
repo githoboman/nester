@@ -82,10 +82,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             // E2E test bypass: if the page has injected a mock wallet session
             // via window.__e2e_wallet__, restore it directly without calling
             // the real wallet kit (which requires a browser extension).
-            const e2eWallet = (window as unknown as Record<string, unknown>)
-                .__e2e_wallet__ as
-                | { address: string; walletId: string }
-                | undefined;
+            // Only active in test environments — never in production.
+            const e2eWallet = process.env.NODE_ENV !== "production"
+                ? (window as unknown as Record<string, unknown>)
+                    .__e2e_wallet__ as
+                    | { address: string; walletId: string }
+                    | undefined
+                : undefined;
             if (e2eWallet?.address && e2eWallet?.walletId) {
                 setAddress(e2eWallet.address);
                 setSelectedWalletId(e2eWallet.walletId);

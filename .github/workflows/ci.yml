@@ -157,7 +157,6 @@ jobs:
   e2e-tests:
     name: E2E Tests (Playwright)
     runs-on: ubuntu-latest
-    if: false
     needs: [dapp-frontend, dapp-backend]
     defaults:
       run:
