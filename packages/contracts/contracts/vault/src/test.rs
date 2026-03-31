@@ -3,6 +3,7 @@
 extern crate std;
 
 use soroban_sdk::{
+    contract, contractimpl,
     testutils::{Address as _, Ledger, LedgerInfo},
     token, Address, Env, String,
 };
@@ -14,7 +15,6 @@ use crate::{VaultContract, VaultContractClient, VaultStatus};
 // Helpers
 // ---------------------------------------------------------------------------
 
-use soroban_sdk::{contract, contractimpl};
 
 #[contract]
 pub struct MockTreasury;
@@ -22,6 +22,23 @@ pub struct MockTreasury;
 #[contractimpl]
 impl MockTreasury {
     pub fn receive_fees(_env: Env, _amount: i128) {}
+}
+
+#[contract]
+struct VaultObserverContract;
+
+#[contractimpl]
+impl VaultObserverContract {
+    pub fn pause_target(env: Env, target: Address, caller: Address) {
+        caller.require_auth();
+        let client = VaultContractClient::new(&env, &target);
+        client.pause(&caller);
+    }
+
+    pub fn is_target_paused(env: Env, target: Address) -> bool {
+        let client = VaultContractClient::new(&env, &target);
+        client.is_paused()
+    }
 }
 
 /// One "unit" in 7-decimal Stellar token precision.
@@ -44,8 +61,7 @@ fn setup() -> (
     token::StellarAssetClient<'static>,
     VaultContractClient<'static>,
     Address,
-) {
-    let env = Env::default();
+) {    let env = Env::default();
     env.mock_all_auths();
 
     // -----------------------------
@@ -94,6 +110,58 @@ fn mint(sac: &token::StellarAssetClient, recipient: &Address, amount: i128) {
     sac.mint(recipient, &amount);
 }
 
+
+// ---------------------------------------------------------------------------
+// Cross-contract pause & idempotence (issue #54 acceptance criteria)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pause_and_unpause_are_idempotent() {
+    let (_env, admin, _token, vault, _treasury) = setup();
+
+    vault.pause(&admin);
+    vault.pause(&admin); // second pause is a no-op
+    assert!(vault.is_paused());
+
+    vault.unpause(&admin);
+    assert!(!vault.is_paused());
+    vault.unpause(&admin); // second unpause is a no-op
+    assert!(!vault.is_paused());
+}
+
+#[test]
+fn cross_contract_pause_state_is_visible() {
+    let (env, admin, _token, vault, _treasury) = setup();
+    let observer_id = env.register_contract(None, VaultObserverContract);
+    let observer = VaultObserverContractClient::new(&env, &observer_id);
+
+    assert!(!observer.is_target_paused(&vault.address));
+
+    vault.pause(&admin);
+    assert!(observer.is_target_paused(&vault.address));
+}
+
+#[test]
+fn cross_contract_admin_can_pause_target() {
+    let (env, admin, _token, vault, _treasury) = setup();
+    let observer_id = env.register_contract(None, VaultObserverContract);
+    let observer = VaultObserverContractClient::new(&env, &observer_id);
+
+    observer.pause_target(&vault.address, &admin);
+    assert!(vault.is_paused());
+}
+
+#[test]
+#[should_panic]
+fn cross_contract_non_admin_cannot_pause_target() {
+    let (env, _admin, _token, vault, _treasury) = setup();
+    let observer_id = env.register_contract(None, VaultObserverContract);
+    let observer = VaultObserverContractClient::new(&env, &observer_id);
+    let outsider = Address::generate(&env);
+
+    observer.pause_target(&vault.address, &outsider);
+}
+
 /// Advance the ledger timestamp by `seconds`.
 fn advance_time(env: &Env, seconds: u64) {
     let current = env.ledger().timestamp();
@@ -102,6 +170,7 @@ fn advance_time(env: &Env, seconds: u64) {
         ..env.ledger().get()
     });
 }
+
 
 // ---------------------------------------------------------------------------
 // Initialization
