@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, vec, Address, Env,
-    IntoVal, Symbol, Val, Vec,
+    Error, IntoVal, Symbol, Val, Vec,
 };
 
 use nester_access_control::{AccessControl, Role};
@@ -761,7 +761,7 @@ fn registry_get_source_status(
 }
 
 fn registry_get_active_sources(env: &Env, registry_id: &Address) -> Vec<RegistryYieldSource> {
-    match env.try_invoke_contract::<Vec<RegistryYieldSource>>(
+    match env.try_invoke_contract::<Vec<RegistryYieldSource>, Error>(
         registry_id,
         &Symbol::new(env, "get_active_sources"),
         ().into_val(env),
