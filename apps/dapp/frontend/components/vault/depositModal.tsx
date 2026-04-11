@@ -16,13 +16,13 @@ import {
 import { usePortfolio } from "@/components/portfolio-provider";
 import { useWallet } from "@/components/wallet-provider";
 import { cn } from "@/lib/utils";
-import { type Vault as VaultDefinition } from "@/lib/mock-vaults";
+import { type Vault as VaultDefinition, type MarketStrategy } from "@/lib/mock-vaults";
 import {
   buildDepositTransaction,
   signTransaction,
   submitTransaction,
   VAULT_CONTRACT_ID,
-  USDC_CONTRACT_ID,
+  VAULT_XLM_CONTRACT_ID,
   UserRejectedError,
   TransactionFailedError,
   TransactionTimeoutError,
@@ -177,30 +177,45 @@ function getVaultMeta(vault: VaultDefinition) {
  */
 export function DepositModal({ open, onClose, vault }: DepositModalProps) {
   const { address } = useWallet();
-  const { getAvailableBalance, recordDeposit } = usePortfolio();
+  const { getAvailableBalance, recordDeposit, refreshBalances } = usePortfolio();
 
   const [amountInput, setAmountInput] = useState("");
   const [state, setState] = useState<ActionState>("input");
   const [errorMsg, setErrorMsg] = useState("");
   const [receipt, setReceipt] = useState<TransactionReceipt | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<"USDC" | "XLM">(
+    (vault?.supportedAssets?.[0] as "USDC" | "XLM") ?? "USDC"
+  );
+  const [selectedStrategy, setSelectedStrategy] = useState<MarketStrategy | null>(
+    vault?.strategies?.[0] ?? null
+  );
+
+  // Keep selectedAsset and strategy in sync when vault changes
+  const supportedAssets = (vault?.supportedAssets ?? ["USDC"]) as ("USDC" | "XLM")[];
+  const strategies = vault?.strategies ?? [];
+
+  // Reset strategy when vault changes
+  if (vault && selectedStrategy && !strategies.find(s => s.id === selectedStrategy.id)) {
+    setSelectedStrategy(strategies[0] ?? null);
+  }
 
   const amount = Number(amountInput) || 0;
   const meta = vault ? getVaultMeta(vault) : null;
-  const balance = getAvailableBalance(meta?.asset ?? "USDC");
+  const balance = getAvailableBalance(selectedAsset);
 
   const validationError = useMemo(() => {
     if (!amount) return null;
     if (amount <= 0) return "Amount must be greater than 0.";
-    if (amount < 1) return "Minimum deposit is 1 USDC.";
     if (amount > balance)
-      return `Insufficient balance. You have ${formatCurrency(balance)} USDC available.`;
+      return `Insufficient balance. You have ${formatCurrency(balance)} ${selectedAsset} available.`;
     return null;
   }, [amount, balance]);
 
   const canSubmit =
     !!vault && !!address && amount > 0 && !validationError && state === "input";
 
-  const estimatedYield = meta ? amount * meta.apy : 0;
+  const effectiveApy = selectedStrategy ? selectedStrategy.apy / 100 : (meta ? meta.apy : 0);
+  const estimatedYield = amount * effectiveApy;
 
   const reset = () => {
     setAmountInput("");
@@ -218,10 +233,13 @@ export function DepositModal({ open, onClose, vault }: DepositModalProps) {
     try {
       // Step 1 — Build
       setState("building");
+      const vaultContractId = selectedAsset === "XLM"
+        ? (VAULT_XLM_CONTRACT_ID || `mock_${vault.id}_xlm`)
+        : (VAULT_CONTRACT_ID || `mock_${vault.id}`);
+
       const { xdr } = await buildDepositTransaction({
         walletAddress: address,
-        contractId: VAULT_CONTRACT_ID || `mock_${vault.id}`,
-        tokenAddress: USDC_CONTRACT_ID || "mock_usdc",
+        contractId: vaultContractId,
         amount,
       });
 
@@ -238,7 +256,7 @@ export function DepositModal({ open, onClose, vault }: DepositModalProps) {
         vault: {
           id: vault.id,
           name: vault.name,
-          asset: meta?.asset || "USDC",
+          asset: selectedAsset,
           apy: meta?.apy || 0,
           lockDays: meta?.lockDays || 0,
           earlyWithdrawalPenaltyPct: 0.1,
@@ -249,6 +267,8 @@ export function DepositModal({ open, onClose, vault }: DepositModalProps) {
 
       setReceipt(txReceipt);
       setState("success");
+      // Re-fetch true on-chain balance so UI reflects what actually happened
+      refreshBalances();
     } catch (err) {
       setErrorMsg(humanizeError(err));
       setState("error");
@@ -260,9 +280,10 @@ export function DepositModal({ open, onClose, vault }: DepositModalProps) {
       open={open && !!vault}
       onClose={state === "signing" || state === "submitting" ? () => {} : reset}
       title={`Deposit into ${vault?.name ?? "Vault"}`}
-      subtitle="Build and sign a Soroban transaction to deposit USDC into this vault."
+      subtitle={`Build and sign a Soroban transaction to deposit ${selectedAsset} into this vault.`}
     >
       {vault && (
+        <>
         <div className="grid gap-0 lg:grid-cols-[1.05fr_0.95fr]">
           {/* ── Left: amount + preview ── */}
           <div className="border-b border-border p-6 lg:border-b-0 lg:border-r">
@@ -281,13 +302,53 @@ export function DepositModal({ open, onClose, vault }: DepositModalProps) {
                     Balance
                   </p>
                   <p className="mt-1 text-sm font-medium text-foreground">
-                    {formatCurrency(balance)} USDC
+                    {formatCurrency(balance)} {selectedAsset}
                   </p>
                 </div>
               </div>
 
+              {/* Strategy selector */}
+              {strategies.length > 0 && (
+                <div className="mt-5">
+                  <label className="mb-2 block text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                    Strategy
+                  </label>
+                  <div className="space-y-1.5">
+                    {strategies.map((strat) => (
+                      <button
+                        key={strat.id}
+                        type="button"
+                        onClick={() => setSelectedStrategy(strat)}
+                        className={cn(
+                          "w-full rounded-xl border px-4 py-3 text-left transition-all",
+                          selectedStrategy?.id === strat.id
+                            ? "border-foreground/20 bg-secondary/50 shadow-sm"
+                            : "border-border hover:border-border/80 hover:bg-secondary/20"
+                        )}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-foreground">{strat.name}</span>
+                          <div className="flex items-center gap-2">
+                            <span className={cn(
+                              "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                              strat.risk === "low" ? "bg-emerald-50 text-emerald-600" :
+                              strat.risk === "medium" ? "bg-amber-50 text-amber-600" :
+                              "bg-red-50 text-red-500"
+                            )}>
+                              {strat.risk}
+                            </span>
+                            <span className="font-mono text-sm text-foreground">{strat.apy}%</span>
+                          </div>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{strat.description}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Amount input */}
-              <div className="mt-6">
+              <div className="mt-5">
                 <label className="mb-2 block text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
                   Deposit Amount
                 </label>
@@ -313,9 +374,34 @@ export function DepositModal({ open, onClose, vault }: DepositModalProps) {
                     className="min-w-0 flex-1 bg-transparent font-heading text-3xl font-light outline-none placeholder:text-muted-foreground/40 disabled:opacity-50"
                   />
                   <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-white px-3 py-2 text-sm font-medium text-foreground shadow-sm">
-                      USDC
-                    </span>
+                    {supportedAssets.length > 1 ? (
+                      <div className="flex rounded-full border border-border bg-white p-0.5 shadow-sm">
+                        {supportedAssets.map((a) => (
+                          <button
+                            key={a}
+                            type="button"
+                            onClick={() => {
+                              setSelectedAsset(a);
+                              setAmountInput("");
+                              if (state === "error") setState("input");
+                            }}
+                            disabled={state !== "input" && state !== "error"}
+                            className={cn(
+                              "rounded-full px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40",
+                              selectedAsset === a
+                                ? "bg-foreground text-background"
+                                : "text-foreground/60 hover:text-foreground"
+                            )}
+                          >
+                            {a}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="rounded-full bg-white px-3 py-2 text-sm font-medium text-foreground shadow-sm">
+                        {selectedAsset}
+                      </span>
+                    )}
                     <button
                       onClick={() => setAmountInput(balance.toFixed(2))}
                       disabled={state !== "input" && state !== "error"}
@@ -336,9 +422,13 @@ export function DepositModal({ open, onClose, vault }: DepositModalProps) {
               {/* Preview */}
               <div className="mt-5 space-y-3 rounded-2xl border border-border bg-secondary/30 p-4">
                 {[
+                  ...(selectedStrategy ? [
+                    { label: "Strategy", value: selectedStrategy.name },
+                    { label: "Strategy APY", value: `${selectedStrategy.apy}%` },
+                  ] : []),
                   {
                     label: "Estimated annual yield",
-                    value: `${formatCurrency(estimatedYield)} USDC`,
+                    value: `${formatCurrency(estimatedYield)} ${selectedAsset}`,
                   },
                   {
                     label: "nVault shares to receive",
@@ -346,18 +436,13 @@ export function DepositModal({ open, onClose, vault }: DepositModalProps) {
                   },
                   {
                     label: "Lock period",
-                    value: meta?.lockDays
-                      ? `${meta.lockDays} days`
+                    value: selectedStrategy?.lockDays
+                      ? `${selectedStrategy.lockDays} days`
                       : vault.maturityTerms,
                   },
-                  {
-                    label: "Management fee (annual)",
-                    value: `${meta?.managementFeePct ?? 0.5}%`,
-                  },
-                  {
-                    label: "Performance fee (on yield)",
-                    value: `${meta?.performanceFeePct ?? 10}%`,
-                  },
+                  ...(selectedStrategy?.penaltyPct ? [
+                    { label: "Early exit penalty", value: `${selectedStrategy.penaltyPct}%` },
+                  ] : []),
                 ].map(({ label, value }) => (
                   <div
                     key={label}
@@ -371,13 +456,12 @@ export function DepositModal({ open, onClose, vault }: DepositModalProps) {
             </div>
           </div>
 
-          {/* ── Right: transaction flow + actions ── */}
-          <div className="p-6">
-            <div className="rounded-3xl border border-border bg-white p-5">
+          {/* ── Right: transaction flow (lg+ only) ── */}
+          <div className="hidden lg:block p-6">
+            <div className="rounded-3xl border border-border bg-white p-5 h-full">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
                 Transaction Flow
               </p>
-
               <div className="mt-4 space-y-3">
                 {TX_STEPS.map(({ label, activeStates }) => {
                   const done = activeStates.includes(state);
@@ -408,52 +492,11 @@ export function DepositModal({ open, onClose, vault }: DepositModalProps) {
                           <Clock3 className="h-4 w-4" />
                         )}
                       </div>
-                      <span className="text-sm text-foreground/80">
-                        {label}
-                      </span>
+                      <span className="text-sm text-foreground/80">{label}</span>
                     </div>
                   );
                 })}
               </div>
-
-              {/* Success receipt */}
-              {state === "success" && receipt && (
-                <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-                  <div className="flex items-center gap-2 text-emerald-700">
-                    <CheckCircle2 className="h-4 w-4" />
-                    <p className="text-sm font-medium">Deposit confirmed</p>
-                  </div>
-                  <p className="mt-2 text-sm text-emerald-800/80">
-                    {formatCurrency(amount)} USDC deposited into the{" "}
-                    {vault.name} vault.
-                  </p>
-                  <p className="mt-1 font-mono text-[11px] text-emerald-800/60">
-                    {truncateTxHash(receipt.txHash)}
-                  </p>
-                  <div className="mt-3">
-                    <Link
-                      href={receipt.explorerUrl}
-                      target="_blank"
-                      className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-2 text-xs font-medium text-foreground shadow-sm hover:shadow"
-                    >
-                      View on Stellar Explorer
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </Link>
-                  </div>
-                </div>
-              )}
-
-              {/* Error state */}
-              {state === "error" && errorMsg && (
-                <div className="mt-5 rounded-2xl border border-destructive/20 bg-destructive/10 p-4">
-                  <div className="flex items-start gap-2 text-sm text-destructive">
-                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>{errorMsg}</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Info note when idle */}
               {state === "input" && (
                 <div className="mt-5 rounded-2xl border border-border bg-secondary/20 p-4">
                   <div className="flex items-start gap-3">
@@ -465,61 +508,96 @@ export function DepositModal({ open, onClose, vault }: DepositModalProps) {
                   </div>
                 </div>
               )}
-
-              {/* Actions */}
-              <div className="mt-5 flex gap-3">
-                <button
-                  onClick={reset}
-                  disabled={state === "signing" || state === "submitting"}
-                  className="flex-1 rounded-full border border-border bg-white px-5 py-3 text-sm font-medium text-foreground transition-colors hover:border-black/15 disabled:opacity-40"
-                >
-                  {state === "success" ? "Close" : "Cancel"}
-                </button>
-
-                {state !== "success" && (
-                  <button
-                    onClick={
-                      state === "error"
-                        ? () => {
-                            setState("input");
-                            setErrorMsg("");
-                          }
-                        : handleDeposit
-                    }
-                    disabled={
-                      state === "building" ||
-                      state === "signing" ||
-                      state === "submitting" ||
-                      (state === "input" && !canSubmit)
-                    }
-                    className="flex-1 rounded-full bg-[#0a0a0a] px-5 py-3 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {state === "building" && (
-                      <span className="inline-flex items-center justify-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Building
-                      </span>
-                    )}
-                    {state === "signing" && (
-                      <span className="inline-flex items-center justify-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Awaiting Signature
-                      </span>
-                    )}
-                    {state === "submitting" && (
-                      <span className="inline-flex items-center justify-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Submitting
-                      </span>
-                    )}
-                    {state === "error" && "Try Again"}
-                    {state === "input" && "Confirm Deposit"}
-                  </button>
-                )}
-              </div>
             </div>
           </div>
         </div>
+
+        {/* ── Bottom: status + actions (always visible) ── */}
+
+        <div className="border-t border-border px-6 pb-6 pt-5">
+          {state === "success" && receipt && (
+            <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+              <div className="flex items-center gap-2 text-emerald-700">
+                <CheckCircle2 className="h-4 w-4" />
+                <p className="text-sm font-medium">Deposit confirmed</p>
+              </div>
+              <p className="mt-2 text-sm text-emerald-800/80">
+                {formatCurrency(amount)} {selectedAsset} deposited into the {vault?.name} vault.
+              </p>
+              <p className="mt-1 font-mono text-[11px] text-emerald-800/60">
+                {truncateTxHash(receipt.txHash)}
+              </p>
+              <div className="mt-3">
+                <Link
+                  href={receipt.explorerUrl}
+                  target="_blank"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-2 text-xs font-medium text-foreground shadow-sm hover:shadow"
+                >
+                  View on Stellar Explorer
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {state === "error" && errorMsg && (
+            <div className="mb-4 rounded-2xl border border-destructive/20 bg-destructive/10 p-4">
+              <div className="flex items-start gap-2 text-sm text-destructive">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            <button
+              onClick={reset}
+              disabled={state === "signing" || state === "submitting"}
+              className="flex-1 rounded-full border border-border bg-white px-5 py-3 text-sm font-medium text-foreground transition-colors hover:border-black/15 disabled:opacity-40"
+            >
+              {state === "success" ? "Close" : "Cancel"}
+            </button>
+
+            {state !== "success" && (
+              <button
+                onClick={
+                  state === "error"
+                    ? () => { setState("input"); setErrorMsg(""); }
+                    : handleDeposit
+                }
+                disabled={
+                  state === "building" ||
+                  state === "signing" ||
+                  state === "submitting" ||
+                  (state === "input" && !canSubmit)
+                }
+                className="flex-1 rounded-full bg-[#0a0a0a] px-5 py-3 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {state === "building" && (
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Building
+                  </span>
+                )}
+                {state === "signing" && (
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Awaiting Signature
+                  </span>
+                )}
+                {state === "submitting" && (
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Submitting
+                  </span>
+                )}
+                {state === "error" && "Try Again"}
+                {state === "input" && "Confirm Deposit"}
+              </button>
+            )}
+          </div>
+        </div>
+        </>
       )}
     </ModalShell>
   );

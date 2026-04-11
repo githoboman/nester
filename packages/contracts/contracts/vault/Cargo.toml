@@ -12,8 +12,8 @@ doctest = false
 soroban-sdk = { workspace = true }
 nester-common = { path = "../../libs/common" }
 nester-access-control = { path = "../access_control" }
-vault-token-contract = { path = "../vault_token" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 nester-test-utils = { path = "../../libs/test_utils" }
+vault-token-contract = { path = "../vault_token" }

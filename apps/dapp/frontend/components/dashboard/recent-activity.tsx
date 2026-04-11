@@ -34,9 +34,9 @@ export function RecentActivity({ transactions }: RecentActivityProps) {
                 <h2 className="font-heading text-lg font-light text-foreground">
                     Recent Activity
                 </h2>
-                <Link href="/dashboard/history">
+                <Link href="/portfolio">
                     <button className="text-xs font-semibold text-primary hover:underline transition-all">
-                        View All History
+                        View Portfolio
                     </button>
                 </Link>
             </div>

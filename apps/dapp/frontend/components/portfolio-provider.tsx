@@ -10,7 +10,8 @@ import {
 } from "react";
 
 import { useWallet } from "@/components/wallet-provider";
-import { getVaultById } from "@/lib/vault-data";
+import { getVaultById, type SupportedAsset } from "@/lib/vault-data";
+import { useNetwork } from "@/hooks/useNetwork";
 
 export type PortfolioTransactionType =
     | "Deposit"
@@ -34,7 +35,7 @@ interface StoredPosition {
     id: string;
     vaultId: string;
     vaultName: string;
-    asset: "USDC";
+    asset: SupportedAsset;
     principal: number;
     shares: number;
     apy: number;
@@ -54,9 +55,23 @@ interface DepositInput {
     vault: {
         id: string;
         name: string;
-        asset: "USDC";
+        asset: SupportedAsset;
         apy: number;
-        lockDays: number;
+        lockDays: number | null;
+        earlyWithdrawalPenaltyPct: number;
+    };
+    amount: number;
+    txHash: string;
+}
+
+interface TransferInput {
+    fromPositionId: string;
+    toVault: {
+        id: string;
+        name: string;
+        asset: SupportedAsset;
+        apy: number;
+        lockDays: number | null;
         earlyWithdrawalPenaltyPct: number;
     };
     amount: number;
@@ -86,11 +101,14 @@ interface PortfolioState {
     getAvailableBalance: (asset?: string) => number;
     getWithdrawalQuote: (positionId: string, grossAmount: number) => WithdrawalQuote | null;
     recordDeposit: (input: DepositInput) => void;
+    recordTransfer: (input: TransferInput) => void;
     recordWithdrawal: (input: WithdrawalInput) => WithdrawalQuote | null;
     /** Push a live balance update from WebSocket events */
     applyBalanceUpdate: (asset: string, newBalance: number) => void;
     /** Push a live yield accrual delta from WebSocket events */
     applyYieldAccrual: (positionId: string, deltaYield: number) => void;
+    /** Re-fetch wallet balances from Horizon (call after on-chain tx confirms) */
+    refreshBalances: () => Promise<void>;
 }
 
 const defaultBalances = {
@@ -146,6 +164,8 @@ function PortfolioStore({
     address: string | null;
     children: ReactNode;
 }) {
+    const { currentNetwork } = useNetwork();
+
     const initialState = useMemo(() => {
         if (!address || typeof window === "undefined") {
             return {
@@ -206,6 +226,72 @@ function PortfolioStore({
         );
     }, [address, balances, storedPositions, transactions]);
 
+    // Sync real on-chain balances from Horizon whenever address or network changes
+    useEffect(() => {
+        if (!address) return;
+
+        const fetchOnChainBalances = async () => {
+            try {
+                const res = await fetch(
+                    `${currentNetwork.horizonUrl}/accounts/${address}`
+                );
+                if (!res.ok) return;
+                const data = await res.json() as {
+                    balances?: Array<{
+                        asset_type: string;
+                        asset_code?: string;
+                        balance: string;
+                    }>;
+                };
+                const raw = data.balances ?? [];
+
+                const xlm = raw.find((b) => b.asset_type === "native");
+                const usdc = raw.find(
+                    (b) => b.asset_type !== "native" && b.asset_code === "USDC"
+                );
+
+                setBalances((prev) => ({
+                    ...prev,
+                    XLM: xlm ? parseFloat(xlm.balance) : (prev.XLM ?? 0),
+                    USDC: usdc ? parseFloat(usdc.balance) : (prev.USDC ?? 0),
+                }));
+            } catch {
+                // silently ignore — local balances remain as fallback
+            }
+        };
+
+        fetchOnChainBalances();
+    }, [address, currentNetwork.horizonUrl]);
+
+    const refreshBalances = async () => {
+        if (!address) return;
+        try {
+            const res = await fetch(
+                `${currentNetwork.horizonUrl}/accounts/${address}`
+            );
+            if (!res.ok) return;
+            const data = await res.json() as {
+                balances?: Array<{
+                    asset_type: string;
+                    asset_code?: string;
+                    balance: string;
+                }>;
+            };
+            const raw = data.balances ?? [];
+            const xlm = raw.find((b) => b.asset_type === "native");
+            const usdc = raw.find(
+                (b) => b.asset_type !== "native" && b.asset_code === "USDC"
+            );
+            setBalances((prev) => ({
+                ...prev,
+                XLM: xlm ? parseFloat(xlm.balance) : (prev.XLM ?? 0),
+                USDC: usdc ? parseFloat(usdc.balance) : (prev.USDC ?? 0),
+            }));
+        } catch {
+            // silently ignore
+        }
+    };
+
     const positions = useMemo(
         () =>
             storedPositions
@@ -259,7 +345,7 @@ function PortfolioStore({
     const recordDeposit = ({ vault, amount, txHash }: DepositInput) => {
         const now = new Date();
         const maturityAt = new Date(now);
-        maturityAt.setDate(maturityAt.getDate() + vault.lockDays);
+        maturityAt.setDate(maturityAt.getDate() + (vault.lockDays ?? 0));
 
         const shares = amount;
         const position: StoredPosition = {
@@ -347,6 +433,58 @@ function PortfolioStore({
         return quote;
     };
 
+    const recordTransfer = ({ fromPositionId, toVault, amount, txHash }: TransferInput) => {
+        const source = positions.find((p) => p.id === fromPositionId);
+        if (!source || amount <= 0 || amount > source.currentValue) return;
+
+        const ratio = amount / source.currentValue;
+        const sharesBurned = source.shares * ratio;
+
+        // Reduce / remove source position
+        setStoredPositions((current) =>
+            current.flatMap((pos) => {
+                if (pos.id !== fromPositionId) return [pos];
+                const live = calculatePositionMetrics(pos);
+                const nextPrincipal = Math.max(0, pos.principal - pos.principal * ratio);
+                const nextShares = Math.max(0, pos.shares - sharesBurned);
+                if (nextPrincipal <= 0.01 || nextShares <= 0.01) return [];
+                return [{ ...pos, principal: nextPrincipal, shares: nextShares }];
+            })
+        );
+
+        // Create new position in destination vault
+        const now = new Date();
+        const maturityAt = new Date(now);
+        maturityAt.setDate(maturityAt.getDate() + (toVault.lockDays ?? 0));
+        const newPosition: StoredPosition = {
+            id: crypto.randomUUID(),
+            vaultId: toVault.id,
+            vaultName: toVault.name,
+            asset: toVault.asset,
+            principal: amount,
+            shares: amount,
+            apy: toVault.apy,
+            depositedAt: now.toISOString(),
+            maturityAt: maturityAt.toISOString(),
+            earlyWithdrawalPenaltyPct: toVault.earlyWithdrawalPenaltyPct,
+        };
+        setStoredPositions((current) => [newPosition, ...current]);
+
+        setTransactions((current) => [
+            {
+                id: crypto.randomUUID(),
+                type: "Rebalance",
+                amount: `${amount.toFixed(2)}`,
+                asset: toVault.asset,
+                vaultName: `${source.vaultName} → ${toVault.name}`,
+                timestamp: now.toISOString(),
+                status: "Confirmed",
+                txHash: txHash || createTransactionHash(),
+            },
+            ...current,
+        ]);
+    };
+
     return (
         <PortfolioContext.Provider
             value={{
@@ -356,9 +494,11 @@ function PortfolioStore({
                 getAvailableBalance,
                 getWithdrawalQuote,
                 recordDeposit,
+                recordTransfer,
                 recordWithdrawal,
                 applyBalanceUpdate,
                 applyYieldAccrual,
+                refreshBalances,
             }}
         >
             {children}
