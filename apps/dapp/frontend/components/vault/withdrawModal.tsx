@@ -20,11 +20,7 @@ import {
 import { useWallet } from "@/components/wallet-provider";
 import { cn } from "@/lib/utils";
 import {
-  buildWithdrawTransaction,
-  signTransaction,
-  submitTransaction,
-  VAULT_CONTRACT_ID,
-  VAULT_XLM_CONTRACT_ID,
+  executeVaultWithdraw,
   UserRejectedError,
   TransactionFailedError,
   TransactionTimeoutError,
@@ -188,25 +184,13 @@ export function WithdrawModal({ open, onClose, position }: WithdrawModalProps) {
     setErrorMsg("");
 
     try {
-      // Step 1 — Build
       setState("building");
-      const isXlm = position.asset?.toUpperCase() === "XLM";
-      const contractId = isXlm
-        ? (VAULT_XLM_CONTRACT_ID || `mock_${position.vaultId}_xlm`)
-        : (VAULT_CONTRACT_ID || `mock_${position.vaultId}`);
-      const { xdr } = await buildWithdrawTransaction({
+      const txReceipt = await executeVaultWithdraw({
         walletAddress: address,
-        contractId,
+        vaultId: position.vaultId,
+        asset: position.asset?.toUpperCase() === "XLM" ? "XLM" : "USDC",
         shares: quote.sharesBurned,
       });
-
-      // Step 2 — Sign
-      setState("signing");
-      const signedXdr = await signTransaction(xdr);
-
-      // Step 3 — Submit
-      setState("submitting");
-      const txReceipt = await submitTransaction(signedXdr);
 
       const result = recordWithdrawal({
         positionId: position.id,

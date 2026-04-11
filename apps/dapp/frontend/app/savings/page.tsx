@@ -23,11 +23,7 @@ import { usePortfolio } from "@/components/portfolio-provider";
 import { cn } from "@/lib/utils";
 import { PositionCards } from "@/components/position-cards";
 import {
-    buildDepositTransaction,
-    signTransaction,
-    submitTransaction,
-    VAULT_CONTRACT_ID,
-    VAULT_XLM_CONTRACT_ID,
+    executeVaultDeposit,
     UserRejectedError,
     TransactionFailedError,
     TransactionTimeoutError,
@@ -519,22 +515,13 @@ function DepositModal({
                                     if (!vault || !canSubmit || !address) return;
                                     setErrorMsg("");
                                     try {
-                                        const contractId = selectedAsset === "XLM"
-                                            ? (VAULT_XLM_CONTRACT_ID || `mock_${vault.id}_xlm`)
-                                            : (VAULT_CONTRACT_ID || `mock_${vault.id}`);
-
                                         setTxState("building");
-                                        const { xdr } = await buildDepositTransaction({
+                                        const receipt = await executeVaultDeposit({
                                             walletAddress: address,
-                                            contractId,
+                                            vaultId: vault.id,
+                                            asset: selectedAsset,
                                             amount: parsedAmount,
                                         });
-
-                                        setTxState("signing");
-                                        const signedXdr = await signTransaction(xdr);
-
-                                        setTxState("submitting");
-                                        const receipt = await submitTransaction(signedXdr);
 
                                         setTxHash(receipt.txHash);
                                         setTxState("success");

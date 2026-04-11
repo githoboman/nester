@@ -296,6 +296,69 @@ export async function submitTransaction(
   throw new TransactionTimeoutError();
 }
 
+// ── High-level vault flows (auto-fallback to mock) ───────────────────────────
+
+function isRealContractId(id: string): boolean {
+  return /^C[A-Z0-9]{55}$/.test(id);
+}
+
+function resolveVaultContractId(asset: "USDC" | "XLM"): string {
+  return asset === "XLM" ? VAULT_XLM_CONTRACT_ID : VAULT_CONTRACT_ID;
+}
+
+async function runMockFlow(
+  walletAddress: string,
+  memo: string
+): Promise<TransactionReceipt> {
+  const { buildMockTransactionXdr, signWithWalletOrMock, simulateSubmission } =
+    await import("@/lib/mock-soroban");
+  const network = getCurrentNetwork();
+  const xdr = await buildMockTransactionXdr(
+    walletAddress,
+    memo,
+    network.networkPassphrase
+  );
+  await signWithWalletOrMock(xdr, network.networkPassphrase);
+  const submission = await simulateSubmission(network.explorerUrl);
+  return { txHash: submission.txHash, explorerUrl: submission.explorerUrl, ledger: 0 };
+}
+
+export async function executeVaultDeposit(params: {
+  walletAddress: string;
+  vaultId: string;
+  asset: "USDC" | "XLM";
+  amount: number;
+}): Promise<TransactionReceipt> {
+  const { walletAddress, vaultId, asset, amount } = params;
+  const contractId = resolveVaultContractId(asset);
+
+  if (!isRealContractId(contractId)) {
+    return runMockFlow(walletAddress, `deposit:${vaultId}:${amount.toFixed(2)}`);
+  }
+
+  const { xdr } = await buildDepositTransaction({ walletAddress, contractId, amount });
+  const signedXdr = await signTransaction(xdr);
+  return submitTransaction(signedXdr);
+}
+
+export async function executeVaultWithdraw(params: {
+  walletAddress: string;
+  vaultId: string;
+  asset: "USDC" | "XLM";
+  shares: number;
+}): Promise<TransactionReceipt> {
+  const { walletAddress, vaultId, asset, shares } = params;
+  const contractId = resolveVaultContractId(asset);
+
+  if (!isRealContractId(contractId)) {
+    return runMockFlow(walletAddress, `withdraw:${vaultId}:${shares.toFixed(2)}`);
+  }
+
+  const { xdr } = await buildWithdrawTransaction({ walletAddress, contractId, shares });
+  const signedXdr = await signTransaction(xdr);
+  return submitTransaction(signedXdr);
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function sleep(ms: number): Promise<void> {

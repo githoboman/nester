@@ -18,11 +18,7 @@ import { useWallet } from "@/components/wallet-provider";
 import { cn } from "@/lib/utils";
 import { type Vault as VaultDefinition, type MarketStrategy } from "@/lib/mock-vaults";
 import {
-  buildDepositTransaction,
-  signTransaction,
-  submitTransaction,
-  VAULT_CONTRACT_ID,
-  VAULT_XLM_CONTRACT_ID,
+  executeVaultDeposit,
   UserRejectedError,
   TransactionFailedError,
   TransactionTimeoutError,
@@ -231,25 +227,13 @@ export function DepositModal({ open, onClose, vault }: DepositModalProps) {
     setErrorMsg("");
 
     try {
-      // Step 1 — Build
       setState("building");
-      const vaultContractId = selectedAsset === "XLM"
-        ? (VAULT_XLM_CONTRACT_ID || `mock_${vault.id}_xlm`)
-        : (VAULT_CONTRACT_ID || `mock_${vault.id}`);
-
-      const { xdr } = await buildDepositTransaction({
+      const txReceipt = await executeVaultDeposit({
         walletAddress: address,
-        contractId: vaultContractId,
+        vaultId: vault.id,
+        asset: selectedAsset,
         amount,
       });
-
-      // Step 2 — Sign
-      setState("signing");
-      const signedXdr = await signTransaction(xdr);
-
-      // Step 3 — Submit
-      setState("submitting");
-      const txReceipt = await submitTransaction(signedXdr);
 
       // Record in portfolio state
       recordDeposit({
