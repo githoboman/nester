@@ -1,17 +1,24 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/redis/go-redis/v9"
+	"github.com/shopspring/decimal"
 
 	"github.com/suncrestlabs/nester/apps/api/internal/auth"
 	"github.com/suncrestlabs/nester/apps/api/internal/config"
@@ -168,6 +175,8 @@ func run() error {
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	startEventIndexer(shutdownCtx, baseLogger, db, cfg.Stellar().RPCURL())
+
 	serverErr := make(chan error, 1)
 	go func() {
 		err := server.ListenAndServe()
@@ -226,4 +235,248 @@ func healthHandler(db *repository.PostgresDB, timeout time.Duration) http.Handle
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	}
+}
+
+func startEventIndexer(ctx context.Context, logger *slog.Logger, db *sql.DB, rpcURL string) {
+	if strings.TrimSpace(rpcURL) == "" {
+		logger.Warn("event indexer disabled: STELLAR_RPC_URL is empty")
+		return
+	}
+
+	go func() {
+		client := &http.Client{Timeout: 8 * time.Second}
+		ticker := time.NewTicker(6 * time.Second)
+		defer ticker.Stop()
+
+		var startLedger uint64
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				contractIDs, err := loadVaultContractIDs(ctx, db)
+				if err != nil {
+					logger.Error("event indexer failed to load vault contracts", "error", err)
+					continue
+				}
+				if len(contractIDs) == 0 {
+					continue
+				}
+
+				events, latestLedger, err := fetchSorobanEvents(ctx, client, rpcURL, contractIDs, startLedger)
+				if err != nil {
+					logger.Error("event indexer fetch failed", "error", err)
+					continue
+				}
+
+				for _, event := range events {
+					if err := applyIndexedEvent(ctx, db, event); err != nil {
+						logger.Error("event indexer failed to apply event", "contract_id", event.ContractID, "event_type", event.EventType, "error", err)
+					}
+				}
+
+				if latestLedger >= startLedger {
+					startLedger = latestLedger + 1
+				}
+			}
+		}
+	}()
+}
+
+func loadVaultContractIDs(ctx context.Context, db *sql.DB) ([]string, error) {
+	rows, err := db.QueryContext(
+		ctx,
+		`SELECT DISTINCT contract_address FROM vaults WHERE deleted_at IS NULL AND contract_address <> ''`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	contractIDs := make([]string, 0)
+	for rows.Next() {
+		var contractID string
+		if err := rows.Scan(&contractID); err != nil {
+			return nil, err
+		}
+		contractIDs = append(contractIDs, contractID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return contractIDs, nil
+}
+
+type indexedEvent struct {
+	ContractID string
+	EventType  string
+	Data       map[string]any
+}
+
+func applyIndexedEvent(ctx context.Context, db *sql.DB, event indexedEvent) error {
+	switch strings.ToLower(strings.TrimSpace(event.EventType)) {
+	case "pause":
+		_, err := db.ExecContext(
+			ctx,
+			`UPDATE vaults SET status = 'paused', updated_at = NOW() WHERE contract_address = $1 AND deleted_at IS NULL`,
+			event.ContractID,
+		)
+		return err
+	case "unpause":
+		_, err := db.ExecContext(
+			ctx,
+			`UPDATE vaults SET status = 'active', updated_at = NOW() WHERE contract_address = $1 AND deleted_at IS NULL`,
+			event.ContractID,
+		)
+		return err
+	case "deposit":
+		amount, ok := extractEventAmount(event)
+		if !ok {
+			return fmt.Errorf("deposit event missing parseable amount")
+		}
+		_, err := db.ExecContext(
+			ctx,
+			`UPDATE vaults
+			 SET total_deposited = total_deposited + $1::numeric,
+			     current_balance = current_balance + $1::numeric,
+			     updated_at = NOW()
+			 WHERE contract_address = $2 AND deleted_at IS NULL`,
+			amount.String(),
+			event.ContractID,
+		)
+		return err
+	case "withdraw", "withdrawal":
+		amount, ok := extractEventAmount(event)
+		if !ok {
+			return fmt.Errorf("withdraw event missing parseable amount")
+		}
+		_, err := db.ExecContext(
+			ctx,
+			`UPDATE vaults
+			 SET current_balance = current_balance - $1::numeric,
+			     updated_at = NOW()
+			 WHERE contract_address = $2 AND deleted_at IS NULL`,
+			amount.String(),
+			event.ContractID,
+		)
+		return err
+	default:
+		return nil
+	}
+}
+
+func extractEventAmount(event indexedEvent) (decimal.Decimal, bool) {
+	if event.Data == nil {
+		return decimal.Zero, false
+	}
+
+	for _, key := range []string{"amount", "value"} {
+		raw, ok := event.Data[key]
+		if !ok {
+			continue
+		}
+
+		switch v := raw.(type) {
+		case string:
+			value, err := decimal.NewFromString(strings.TrimSpace(v))
+			if err != nil {
+				return decimal.Zero, false
+			}
+			return value, true
+		case int:
+			return decimal.NewFromInt(int64(v)), true
+		case int64:
+			return decimal.NewFromInt(v), true
+		case float64:
+			return decimal.NewFromFloat(v), true
+		}
+	}
+
+	return decimal.Zero, false
+}
+
+func fetchSorobanEvents(
+	ctx context.Context,
+	client *http.Client,
+	rpcURL string,
+	contractIDs []string,
+	startLedger uint64,
+) ([]indexedEvent, uint64, error) {
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "nester-indexer",
+		"method":  "getEvents",
+		"params": map[string]any{
+			"startLedger": startLedger,
+			"filters": []map[string]any{
+				{
+					"type":      "contract",
+					"contractIds": contractIDs,
+				},
+			},
+			"pagination": map[string]any{"limit": 200},
+		},
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpcURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, 0, fmt.Errorf("rpc returned %d: %s", resp.StatusCode, string(payload))
+	}
+
+	var rpcResp struct {
+		Result struct {
+			LatestLedger uint64 `json:"latestLedger"`
+			Events       []struct {
+				ContractID string         `json:"contractId"`
+				Topic      []interface{}  `json:"topic"`
+				Value      map[string]any `json:"value"`
+			} `json:"events"`
+		} `json:"result"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return nil, 0, err
+	}
+	if rpcResp.Error != nil {
+		return nil, 0, fmt.Errorf("rpc error: %s", rpcResp.Error.Message)
+	}
+
+	events := make([]indexedEvent, 0, len(rpcResp.Result.Events))
+	for _, raw := range rpcResp.Result.Events {
+		eventType := ""
+		if len(raw.Topic) > 0 {
+			if topic, ok := raw.Topic[0].(string); ok {
+				eventType = topic
+			}
+		}
+		if eventType == "" {
+			continue
+		}
+		events = append(events, indexedEvent{
+			ContractID: raw.ContractID,
+			EventType:  eventType,
+			Data:       raw.Value,
+		})
+	}
+
+	return events, rpcResp.Result.LatestLedger, nil
 }

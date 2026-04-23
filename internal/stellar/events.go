@@ -21,6 +21,7 @@ type EventListener func(event *Event)
 // NewEventPoller creates a new event poller
 func NewEventPoller(client *Client) *EventPoller {
 	return &EventPoller{
+		client:    client,
 		listeners: make(map[string][]EventListener),
 		done:      make(chan struct{}),
 	}
