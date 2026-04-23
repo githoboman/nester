@@ -2,8 +2,9 @@
 
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
+    wallet_address TEXT NOT NULL UNIQUE CHECK (length(btrim(wallet_address)) > 0),
+    display_name TEXT NOT NULL,
+    kyc_status TEXT NOT NULL DEFAULT 'pending',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -65,8 +66,8 @@ CREATE INDEX IF NOT EXISTS idx_settlements_status ON settlements(status);
 
 -- Seed data
 
-INSERT INTO users (id, email, name, created_at, updated_at) VALUES
-    ('550e8400-e29b-41d4-a716-446655440001', 'testuser@nester.dev', 'Test User', NOW(), NOW());
+INSERT INTO users (id, wallet_address, display_name, kyc_status, created_at, updated_at) VALUES
+    ('550e8400-e29b-41d4-a716-446655440001', 'GDUMMYWALLET000000000000000000000000000000000000000000001', 'Test User', 'approved', NOW(), NOW());
 
 INSERT INTO vaults (id, user_id, contract_address, total_deposited, current_balance, currency, status) VALUES
     ('550e8400-e29b-41d4-a716-446655440010',
