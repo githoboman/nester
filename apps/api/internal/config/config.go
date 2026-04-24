@@ -23,6 +23,7 @@ type Config struct {
 	auth                  AuthConfig
 	rateLimit             RateLimitConfig
 	log                   LogConfig
+	allowedOrigins        []string
 }
 
 type ServerConfig struct {
@@ -123,6 +124,7 @@ func Load() (*Config, error) {
 			level:  strings.ToLower(loader.stringDefault("LOG_LEVEL", "info")),
 			format: strings.ToLower(loader.stringDefault("LOG_FORMAT", defaultLogFormat(environment))),
 		},
+		allowedOrigins: loader.stringSliceDefault("ALLOWED_ORIGINS", nil),
 	}
 
 	cfg.validate(&loader)
@@ -168,6 +170,14 @@ func (c Config) Log() LogConfig {
 
 func (c Config) Redis() RedisConfig {
 	return c.redis
+}
+
+// AllowedOrigins returns the list of origins permitted to make cross-origin
+// requests to the API. An empty slice disables cross-origin access.
+func (c Config) AllowedOrigins() []string {
+	out := make([]string, len(c.allowedOrigins))
+	copy(out, c.allowedOrigins)
+	return out
 }
 
 func (r RedisConfig) Addr() string {
@@ -237,6 +247,29 @@ func (c *Config) validate(loader *envLoader) {
 
 	if !isOneOf(c.log.format, "json", "text") {
 		loader.addError("LOG_FORMAT must be one of json, text")
+	}
+
+	validateAllowedOrigins(c.environment, c.allowedOrigins, loader)
+}
+
+func validateAllowedOrigins(environment string, origins []string, loader *envLoader) {
+	if (environment == "production" || environment == "staging") && len(origins) == 0 {
+		loader.addError("ALLOWED_ORIGINS must list at least one origin in production or staging")
+	}
+
+	for _, origin := range origins {
+		if origin == "*" {
+			loader.addError("ALLOWED_ORIGINS must not contain wildcard \"*\"; list explicit origins instead")
+			continue
+		}
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			loader.addError(fmt.Sprintf("ALLOWED_ORIGINS entry %q is not a valid origin (expected scheme://host[:port])", origin))
+			continue
+		}
+		if parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			loader.addError(fmt.Sprintf("ALLOWED_ORIGINS entry %q must not contain a path, query, or fragment", origin))
+		}
 	}
 }
 
@@ -373,6 +406,21 @@ func (l *envLoader) intDefault(key string, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+func (l *envLoader) stringSliceDefault(key string, fallback []string) []string {
+	raw, ok := l.lookup(key)
+	if !ok {
+		return fallback
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func (l *envLoader) durationDefault(key string, fallback time.Duration) time.Duration {

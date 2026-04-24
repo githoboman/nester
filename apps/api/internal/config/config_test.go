@@ -22,6 +22,7 @@ func baseEnv(t *testing.T) {
 		"AUTH_JWT_SECRET", "AUTH_TOKEN_EXPIRY", "AUTH_CHALLENGE_EXPIRY",
 		"RATELIMIT_GLOBAL_LIMIT", "RATELIMIT_GLOBAL_WINDOW", "RATELIMIT_WRITE_LIMIT", "RATELIMIT_WRITE_WINDOW",
 		"LOG_LEVEL", "LOG_FORMAT",
+		"ALLOWED_ORIGINS",
 	} {
 		t.Setenv(key, "")
 	}
@@ -54,6 +55,7 @@ func TestLoadFromDotEnv(t *testing.T) {
 		"STELLAR_RPC_URL=https://rpc.example.com",
 		"STELLAR_HORIZON_URL=https://horizon.example.com",
 		"AUTH_JWT_SECRET=this-is-a-very-secret-jwt-key-that-is-at-least-thirty-two-bytes",
+		"ALLOWED_ORIGINS=https://app.example.com",
 	}, "\n"))
 
 	chdir(t, dir)
@@ -171,6 +173,7 @@ func TestLoadEnvVarsTakePrecedenceOverDotEnv(t *testing.T) {
 	t.Setenv("STELLAR_NETWORK_PASSPHRASE", "From EnvVar")
 	t.Setenv("STELLAR_RPC_URL", "https://envvar-rpc.example.com")
 	t.Setenv("STELLAR_HORIZON_URL", "https://envvar-horizon.example.com")
+	t.Setenv("ALLOWED_ORIGINS", "https://app.example.com")
 
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".env"), strings.Join([]string{
@@ -214,6 +217,7 @@ func TestLoadConcurrentCalls(t *testing.T) {
 		"STELLAR_RPC_URL=https://rpc.example.com",
 		"STELLAR_HORIZON_URL=https://horizon.example.com",
 		"AUTH_JWT_SECRET=this-is-a-very-secret-jwt-key-that-is-at-least-thirty-two-bytes",
+		"ALLOWED_ORIGINS=https://app.example.com",
 	}, "\n"))
 	chdir(t, dir)
 
@@ -263,6 +267,7 @@ func TestLoadProcessEnvOverridesDotEnvAndFallsBack(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("SERVER_PORT", "9091")
 	t.Setenv("DATABASE_DSN", "postgres://env:secret@localhost:5432/nester?sslmode=disable")
+	t.Setenv("ALLOWED_ORIGINS", "https://app.example.com")
 
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".env"), strings.Join([]string{
@@ -430,6 +435,7 @@ func TestLoadProductionMode(t *testing.T) {
 	baseEnv(t)
 	requiredEnv(t)
 	t.Setenv("APP_ENV", "production")
+	t.Setenv("ALLOWED_ORIGINS", "https://app.example.com")
 
 	chdir(t, t.TempDir())
 
@@ -680,6 +686,120 @@ func TestLoadMultipleValidationErrors(t *testing.T) {
 		if !strings.Contains(message, expected) {
 			t.Errorf("expected error to contain %q, got:\n%s", expected, message)
 		}
+	}
+}
+
+// TestLoadAllowedOriginsParsed verifies ALLOWED_ORIGINS is split on commas
+// with whitespace trimmed and empty entries dropped.
+func TestLoadAllowedOriginsParsed(t *testing.T) {
+	baseEnv(t)
+	requiredEnv(t)
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("ALLOWED_ORIGINS", "https://app.example.com, https://example.com ,,http://localhost:3000")
+
+	chdir(t, t.TempDir())
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	got := cfg.AllowedOrigins()
+	want := []string{"https://app.example.com", "https://example.com", "http://localhost:3000"}
+	if len(got) != len(want) {
+		t.Fatalf("AllowedOrigins() = %v, want %v", got, want)
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("AllowedOrigins()[%d] = %q, want %q", i, got[i], v)
+		}
+	}
+}
+
+// TestLoadAllowedOriginsRequiredInProduction verifies production requires
+// ALLOWED_ORIGINS to be populated.
+func TestLoadAllowedOriginsRequiredInProduction(t *testing.T) {
+	baseEnv(t)
+	requiredEnv(t)
+	t.Setenv("APP_ENV", "production")
+
+	chdir(t, t.TempDir())
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected Load() to fail when ALLOWED_ORIGINS is empty in production")
+	}
+	if !strings.Contains(err.Error(), "ALLOWED_ORIGINS") {
+		t.Fatalf("expected error to mention ALLOWED_ORIGINS, got %q", err.Error())
+	}
+}
+
+// TestLoadAllowedOriginsRejectsWildcard verifies "*" is rejected explicitly.
+func TestLoadAllowedOriginsRejectsWildcard(t *testing.T) {
+	baseEnv(t)
+	requiredEnv(t)
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("ALLOWED_ORIGINS", "*")
+
+	chdir(t, t.TempDir())
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected Load() to fail when ALLOWED_ORIGINS contains a wildcard")
+	}
+	if !strings.Contains(err.Error(), "wildcard") {
+		t.Fatalf("expected wildcard error, got %q", err.Error())
+	}
+}
+
+// TestLoadAllowedOriginsRejectsMalformed verifies malformed origins are rejected.
+func TestLoadAllowedOriginsRejectsMalformed(t *testing.T) {
+	cases := []struct {
+		name   string
+		origin string
+	}{
+		{"missing scheme", "app.example.com"},
+		{"unsupported scheme", "ftp://example.com"},
+		{"has path", "https://example.com/api"},
+		{"has query", "https://example.com?foo=1"},
+		{"trailing slash", "https://example.com/"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			baseEnv(t)
+			requiredEnv(t)
+			t.Setenv("APP_ENV", "development")
+			t.Setenv("ALLOWED_ORIGINS", tc.origin)
+
+			chdir(t, t.TempDir())
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("expected Load() to fail for malformed origin %q", tc.origin)
+			}
+			if !strings.Contains(err.Error(), "ALLOWED_ORIGINS") {
+				t.Fatalf("expected error to mention ALLOWED_ORIGINS, got %q", err.Error())
+			}
+		})
+	}
+}
+
+// TestLoadAllowedOriginsOptionalInDevelopment verifies development loads
+// successfully with no ALLOWED_ORIGINS set.
+func TestLoadAllowedOriginsOptionalInDevelopment(t *testing.T) {
+	baseEnv(t)
+	requiredEnv(t)
+	t.Setenv("APP_ENV", "development")
+
+	chdir(t, t.TempDir())
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.AllowedOrigins()) != 0 {
+		t.Fatalf("expected empty AllowedOrigins() in dev with no env, got %v", cfg.AllowedOrigins())
 	}
 }
 

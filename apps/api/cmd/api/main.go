@@ -127,15 +127,21 @@ func run() error {
 	globalLimiter := middleware.IPRateLimiter(cfg.RateLimit().GlobalLimit(), cfg.RateLimit().GlobalWindow())
 	// Write rate limit is stricter and applies only to mutating methods (POST/PUT/PATCH/DELETE).
 	writeLimiter := middleware.WriteMethodRateLimiter(cfg.RateLimit().WriteLimit(), cfg.RateLimit().WriteWindow())
+	// CORS sits inside rate limiting (preflights count against the bucket) and
+	// outside auth (preflights don't carry credentials and must short-circuit
+	// before Authenticate rejects them).
+	cors := middleware.CORS(cfg.AllowedOrigins())
 
 	server := &http.Server{
 		Addr: cfg.Server().Address(),
 		Handler: middleware.RecoverPanic(baseLogger)(
 			globalLimiter(
-				writeLimiter(
-					authenticator(
-						middleware.LimitRequestBody(1 * 1024 * 1024)(
-							middleware.Logging(baseLogger)(mux),
+				cors(
+					writeLimiter(
+						authenticator(
+							middleware.LimitRequestBody(1 * 1024 * 1024)(
+								middleware.Logging(baseLogger)(mux),
+							),
 						),
 					),
 				),
