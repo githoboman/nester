@@ -21,6 +21,7 @@ func baseEnv(t *testing.T) {
 		"STELLAR_NETWORK_PASSPHRASE", "STELLAR_RPC_URL", "STELLAR_HORIZON_URL",
 		"AUTH_JWT_SECRET", "AUTH_TOKEN_EXPIRY", "AUTH_CHALLENGE_EXPIRY",
 		"RATELIMIT_GLOBAL_LIMIT", "RATELIMIT_GLOBAL_WINDOW", "RATELIMIT_WRITE_LIMIT", "RATELIMIT_WRITE_WINDOW",
+		"RATELIMIT_WALLET_LIMIT", "RATELIMIT_WALLET_WINDOW",
 		"LOG_LEVEL", "LOG_FORMAT",
 		"ALLOWED_ORIGINS",
 	} {
@@ -400,6 +401,12 @@ func TestLoadAllDefaults(t *testing.T) {
 		{"database connection timeout", cfg.Database().ConnectionTimeout(), 5 * time.Second},
 		{"log level", cfg.Log().Level(), "info"},
 		{"log format", cfg.Log().Format(), "text"},
+		{"ratelimit global limit", cfg.RateLimit().GlobalLimit(), 100},
+		{"ratelimit global window", cfg.RateLimit().GlobalWindow(), 1 * time.Minute},
+		{"ratelimit write limit", cfg.RateLimit().WriteLimit(), 20},
+		{"ratelimit write window", cfg.RateLimit().WriteWindow(), 1 * time.Minute},
+		{"ratelimit wallet limit", cfg.RateLimit().WalletLimit(), 60},
+		{"ratelimit wallet window", cfg.RateLimit().WalletWindow(), 1 * time.Minute},
 	}
 
 	for _, tc := range cases {
@@ -686,6 +693,61 @@ func TestLoadMultipleValidationErrors(t *testing.T) {
 		if !strings.Contains(message, expected) {
 			t.Errorf("expected error to contain %q, got:\n%s", expected, message)
 		}
+	}
+}
+
+// TestLoadWalletRateLimitRejectsNonPositiveValues verifies validation.
+func TestLoadWalletRateLimitRejectsNonPositiveValues(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+		val  string
+		want string
+	}{
+		{"zero limit", "RATELIMIT_WALLET_LIMIT", "0", "RATELIMIT_WALLET_LIMIT must be greater than 0"},
+		{"negative limit", "RATELIMIT_WALLET_LIMIT", "-1", "RATELIMIT_WALLET_LIMIT must be greater than 0"},
+		{"zero window", "RATELIMIT_WALLET_WINDOW", "0s", "RATELIMIT_WALLET_WINDOW must be greater than 0"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			baseEnv(t)
+			requiredEnv(t)
+			t.Setenv("APP_ENV", "development")
+			t.Setenv(tc.key, tc.val)
+
+			chdir(t, t.TempDir())
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("expected Load() to fail for %s=%s", tc.key, tc.val)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error to contain %q, got %q", tc.want, err.Error())
+			}
+		})
+	}
+}
+
+// TestLoadWalletRateLimitOverrides verifies env overrides are honoured.
+func TestLoadWalletRateLimitOverrides(t *testing.T) {
+	baseEnv(t)
+	requiredEnv(t)
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("RATELIMIT_WALLET_LIMIT", "30")
+	t.Setenv("RATELIMIT_WALLET_WINDOW", "15s")
+
+	chdir(t, t.TempDir())
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.RateLimit().WalletLimit(); got != 30 {
+		t.Errorf("WalletLimit() = %d, want 30", got)
+	}
+	if got := cfg.RateLimit().WalletWindow(); got != 15*time.Second {
+		t.Errorf("WalletWindow() = %s, want 15s", got)
 	}
 }
 

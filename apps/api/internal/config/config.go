@@ -58,6 +58,8 @@ type RateLimitConfig struct {
 	globalWindow time.Duration
 	writeLimit   int
 	writeWindow  time.Duration
+	walletLimit  int
+	walletWindow time.Duration
 }
 
 type LogConfig struct {
@@ -119,6 +121,8 @@ func Load() (*Config, error) {
 			globalWindow: loader.durationDefault("RATELIMIT_GLOBAL_WINDOW", 1*time.Minute),
 			writeLimit:   loader.intDefault("RATELIMIT_WRITE_LIMIT", 20),
 			writeWindow:  loader.durationDefault("RATELIMIT_WRITE_WINDOW", 1*time.Minute),
+			walletLimit:  loader.intDefault("RATELIMIT_WALLET_LIMIT", 60),
+			walletWindow: loader.durationDefault("RATELIMIT_WALLET_WINDOW", 1*time.Minute),
 		},
 		log: LogConfig{
 			level:  strings.ToLower(loader.stringDefault("LOG_LEVEL", "info")),
@@ -241,6 +245,14 @@ func (c *Config) validate(loader *envLoader) {
 		loader.addError("RATELIMIT_WRITE_WINDOW must be greater than 0")
 	}
 
+	if c.rateLimit.walletLimit <= 0 {
+		loader.addError("RATELIMIT_WALLET_LIMIT must be greater than 0")
+	}
+
+	if c.rateLimit.walletWindow <= 0 {
+		loader.addError("RATELIMIT_WALLET_WINDOW must be greater than 0")
+	}
+
 	if !isOneOf(c.log.level, "debug", "info", "warn", "error") {
 		loader.addError("LOG_LEVEL must be one of debug, info, warn, error")
 	}
@@ -359,6 +371,14 @@ func (r RateLimitConfig) WriteLimit() int {
 
 func (r RateLimitConfig) WriteWindow() time.Duration {
 	return r.writeWindow
+}
+
+func (r RateLimitConfig) WalletLimit() int {
+	return r.walletLimit
+}
+
+func (r RateLimitConfig) WalletWindow() time.Duration {
+	return r.walletWindow
 }
 
 type envLoader struct {
