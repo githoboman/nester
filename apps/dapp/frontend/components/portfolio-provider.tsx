@@ -213,6 +213,13 @@ function PortfolioStore({
     const [transactions, setTransactions] = useState<PortfolioTransaction[]>(
         initialState.transactions
     );
+    const markConfirmed = (txHash: string) => {
+        setTransactions((current) =>
+            current.map((tx) =>
+                tx.txHash === txHash ? { ...tx, status: "Confirmed" } : tx
+            )
+        );
+    };
 
     useEffect(() => {
         if (!address || typeof window === "undefined") return;
@@ -374,11 +381,12 @@ function PortfolioStore({
                 asset: vault.asset,
                 vaultName: vault.name,
                 timestamp: now.toISOString(),
-                status: "Confirmed",
+                status: "Pending",
                 txHash: txHash || createTransactionHash(),
             },
             ...current,
         ]);
+        window.setTimeout(() => markConfirmed(txHash), 6000);
     };
 
     const recordWithdrawal = ({ positionId, grossAmount, txHash }: WithdrawalInput) => {
@@ -424,11 +432,12 @@ function PortfolioStore({
                 asset: target.asset,
                 vaultName: target.vaultName,
                 timestamp: new Date().toISOString(),
-                status: "Confirmed",
+                status: "Pending",
                 txHash: txHash || createTransactionHash(),
             },
             ...current,
         ]);
+        window.setTimeout(() => markConfirmed(txHash), 6000);
 
         return quote;
     };
@@ -478,11 +487,12 @@ function PortfolioStore({
                 asset: toVault.asset,
                 vaultName: `${source.vaultName} → ${toVault.name}`,
                 timestamp: now.toISOString(),
-                status: "Confirmed",
+                status: "Pending",
                 txHash: txHash || createTransactionHash(),
             },
             ...current,
         ]);
+        window.setTimeout(() => markConfirmed(txHash), 6000);
     };
 
     return (

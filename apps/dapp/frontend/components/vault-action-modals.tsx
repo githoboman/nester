@@ -197,6 +197,7 @@ export function DepositModal({
                 txHash: submission.txHash,
             });
 
+            await new Promise((resolve) => setTimeout(resolve, 5000));
             setReceipt({
                 txHash: submission.txHash,
                 explorerUrl: submission.explorerUrl,
@@ -634,6 +635,7 @@ export function WithdrawModal({
                 throw new Error("Unable to complete the withdrawal");
             }
 
+            await new Promise((resolve) => setTimeout(resolve, 5000));
             setReceipt({
                 txHash: submission.txHash,
                 explorerUrl: submission.explorerUrl,
