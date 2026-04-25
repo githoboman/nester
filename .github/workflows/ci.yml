@@ -124,6 +124,7 @@ jobs:
 
       - name: Audit JavaScript dependencies
         run: pnpm audit --audit-level=high
+        working-directory: apps/dapp/frontend
 
       - uses: actions/setup-python@v5
         with:
