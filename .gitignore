@@ -38,6 +38,11 @@ pnpm-debug.log*
 .env*
 !.env.example
 !apps/api/.env.example
+!apps/intelligence/.env.example
+
+# Compiled binaries and executables
+*.exe
+bin/
 
 # Vercel
 .vercel
