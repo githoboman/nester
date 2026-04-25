@@ -17,11 +17,13 @@ const defaultMaxBodyBytes int64 = 1 << 20 // 1 MiB
 // Callers may supply a database ping, a no-op, or a stub for tests.
 type HealthChecker func(ctx context.Context) error
 
-// New assembles the full HTTP handler: panic recovery → request-size limit →
-// structured logging → mux.  Routes are registered via the returned *Mux.
+// New assembles the full HTTP handler: panic recovery → CORS → request-size
+// limit → structured logging → mux.  Routes are registered via the returned
+// *Mux. allowedOrigins is the list of origins permitted to make cross-origin
+// requests; an empty slice disables cross-origin access.
 //
 // The returned http.Handler is ready to pass to http.Server.
-func New(logger *slog.Logger, checker HealthChecker) (http.Handler, *http.ServeMux) {
+func New(logger *slog.Logger, checker HealthChecker, allowedOrigins []string) (http.Handler, *http.ServeMux) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler(checker))
 	mux.HandleFunc("GET /healthz", healthHandler(checker))
@@ -29,7 +31,7 @@ func New(logger *slog.Logger, checker HealthChecker) (http.Handler, *http.ServeM
 	// Build the middleware stack (outermost first):
 	// RecoverPanic → CORS → LimitRequestBody → Logging → mux
 	handler := middleware.RecoverPanic(logger)(
-		middleware.CORS(
+		middleware.CORS(allowedOrigins)(
 			middleware.LimitRequestBody(defaultMaxBodyBytes)(
 				middleware.Logging(logger)(mux),
 			),

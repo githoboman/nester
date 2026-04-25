@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/suncrestlabs/nester/apps/api/internal/auth"
 	"github.com/suncrestlabs/nester/apps/api/internal/config"
 	"github.com/suncrestlabs/nester/apps/api/internal/handler"
 	"github.com/suncrestlabs/nester/apps/api/internal/middleware"
@@ -127,15 +128,31 @@ func run() error {
 	globalLimiter := middleware.IPRateLimiter(cfg.RateLimit().GlobalLimit(), cfg.RateLimit().GlobalWindow())
 	// Write rate limit is stricter and applies only to mutating methods (POST/PUT/PATCH/DELETE).
 	writeLimiter := middleware.WriteMethodRateLimiter(cfg.RateLimit().WriteLimit(), cfg.RateLimit().WriteWindow())
+	// Wallet rate limit runs inside Authenticate so the caller's wallet address
+	// is in context. Unauthenticated requests produce an empty key and pass
+	// through — public routes are covered by the IP and write limiters above.
+	walletLimiter := middleware.WalletRateLimiter(
+		cfg.RateLimit().WalletLimit(),
+		cfg.RateLimit().WalletWindow(),
+		walletKeyFromContext,
+	)
+	// CORS sits inside rate limiting (preflights count against the bucket) and
+	// outside auth (preflights don't carry credentials and must short-circuit
+	// before Authenticate rejects them).
+	cors := middleware.CORS(cfg.AllowedOrigins())
 
 	server := &http.Server{
 		Addr: cfg.Server().Address(),
 		Handler: middleware.RecoverPanic(baseLogger)(
 			globalLimiter(
-				writeLimiter(
-					authenticator(
-						middleware.LimitRequestBody(1 * 1024 * 1024)(
-							middleware.Logging(baseLogger)(mux),
+				cors(
+					writeLimiter(
+						authenticator(
+							walletLimiter(
+								middleware.LimitRequestBody(1 * 1024 * 1024)(
+									middleware.Logging(baseLogger)(mux),
+								),
+							),
 						),
 					),
 				),
@@ -182,6 +199,17 @@ func run() error {
 
 	baseLogger.Info("server stopped")
 	return nil
+}
+
+// walletKeyFromContext returns the authenticated caller's wallet address for
+// per-wallet rate limiting. An empty string means no key is available (public
+// route or claims without a wallet) — WalletRateLimiter passes those through.
+func walletKeyFromContext(r *http.Request) string {
+	u, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		return ""
+	}
+	return u.WalletAddress
 }
 
 func healthHandler(db *repository.PostgresDB, timeout time.Duration) http.HandlerFunc {
