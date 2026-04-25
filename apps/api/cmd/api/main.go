@@ -96,6 +96,11 @@ func run() error {
 		cfg.SettlementProviderURL(),
 	)
 	adminHandler := handler.NewAdminHandler(adminService)
+	adminHandler.SetEventSyncer(&mainEventSyncer{
+		db:     db,
+		rpcURL: cfg.Stellar().RPCURL(),
+		logger: baseLogger,
+	})
 
 	var challengeStore service.ChallengeStore
 	if addr := cfg.Redis().Addr(); addr != "" {
@@ -605,4 +610,56 @@ ON CONFLICT (event_id) DO NOTHING`,
 		return false, err
 	}
 	return rowsAffected == 1, nil
+}
+
+// mainEventSyncer implements handler.EventSyncer using the same indexer
+// helpers defined in this package, allowing the admin handler to trigger
+// a manual one-shot sync for recovery purposes.
+type mainEventSyncer struct {
+	db     *sql.DB
+	rpcURL string
+	logger *slog.Logger
+}
+
+func (s *mainEventSyncer) SyncEvents(ctx context.Context) (int, error) {
+	if err := ensureIndexerTables(ctx, s.db); err != nil {
+		return 0, fmt.Errorf("indexer tables: %w", err)
+	}
+
+	startLedger, err := getLastIndexedLedger(ctx, s.db)
+	if err != nil {
+		return 0, fmt.Errorf("load cursor: %w", err)
+	}
+
+	contractIDs, err := loadVaultContractIDs(ctx, s.db)
+	if err != nil {
+		return 0, fmt.Errorf("load contracts: %w", err)
+	}
+	if len(contractIDs) == 0 {
+		return 0, nil
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	events, latestLedger, err := fetchSorobanEvents(ctx, client, s.rpcURL, contractIDs, startLedger)
+	if err != nil {
+		return 0, fmt.Errorf("fetch events: %w", err)
+	}
+
+	processed := 0
+	for _, event := range events {
+		ok, err := applyIndexedEvent(ctx, s.db, event)
+		if err != nil {
+			s.logger.Error("admin sync: failed to apply event", "event_id", event.ID, "error", err)
+			continue
+		}
+		if ok {
+			processed++
+		}
+	}
+
+	if err := setLastIndexedLedger(ctx, s.db, latestLedger); err != nil {
+		s.logger.Error("admin sync: failed to persist cursor", "ledger", latestLedger, "error", err)
+	}
+
+	return processed, nil
 }
