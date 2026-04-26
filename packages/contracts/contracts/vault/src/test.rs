@@ -509,7 +509,7 @@ fn any_address_can_deposit() {
     let random_user = Address::generate(&_env);
     mint(&token, &random_user, 100 * XLM);
 
-    let bal = vault.deposit(&random_user, &(100 * XLM));
+    let bal = vault.deposit(&random_user, &(100 * XLM), &0);
     assert_eq!(bal, 100 * XLM);
 }
 
@@ -519,8 +519,8 @@ fn any_address_can_withdraw() {
     let random_user = Address::generate(&_env);
     mint(&token, &random_user, 100 * XLM);
 
-    vault.deposit(&random_user, &(100 * XLM));
-    let bal = vault.withdraw(&random_user, &(100 * XLM));
+    vault.deposit(&random_user, &(100 * XLM), &0);
+    let bal = vault.withdraw(&random_user, &(100 * XLM), &0);
     assert_eq!(bal, 0);
 }
 
