@@ -22,6 +22,7 @@ import {
     type PortfolioPosition,
 } from "@/components/portfolio-provider";
 import { WithdrawModal } from "@/components/vault-action-modals";
+import { PrometheusPanel } from "@/components/prometheus-panel";
 import { cn } from "@/lib/utils";
 import { GuidedTour } from "@/components/onboarding/GuidedTour";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
@@ -340,6 +341,7 @@ export default function Dashboard() {
                 </motion.div>
             )}
 
+            <PrometheusPanel />
             <WithdrawModal
                 open={!!selectedPosition}
                 onClose={() => setSelectedPosition(null)}
