@@ -154,14 +154,3 @@ func isSupportedTransactionType(value transaction.TransactionType) bool {
 		return false
 	}
 }
-action.StatusFailed, &confirmedAt, nil
-}
-
-func isSupportedTransactionType(value transaction.TransactionType) bool {
-	switch value {
-	case transaction.TypeDeposit, transaction.TypeWithdrawal, transaction.TypeSettlement:
-		return true
-	default:
-		return false
-	}
-}
