@@ -2,8 +2,8 @@
 
 import { useEffect } from "react";
 import { useParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { ProtectedRoute } from "@/components/protected-route";
-import { useWallet } from "@/components/wallet-provider";
 import { AppShell } from "@/components/app-shell";
 import Link from "next/link";
 import Image from "next/image";
@@ -46,6 +46,7 @@ function InfoTooltip({ text }: { text: string }) {
 
 export default function VaultDetailPage() {
     const { id } = useParams();
+    const router = useRouter();
     
     const { data: vaults = [], isLoading } = useVaults();
     const vault = vaults.find(v => v.id === id?.toString());
@@ -53,14 +54,17 @@ export default function VaultDetailPage() {
     // If vault isn't found after loading, redirect to vaults list
     useEffect(() => {
         if (!isLoading && !vault) {
-            window.location.href = "/vaults";
+            router.replace("/vaults");
         }
-    }, [vault, isLoading]);
-
-    if (isLoading || !vault) return null;
+    }, [vault, isLoading, router]);
 
     return (
-        <ProtectedRoute>
+        <ProtectedRoute
+            fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}
+        >
+            {isLoading || !vault ? (
+                <div className="flex items-center justify-center min-h-screen">Loading...</div>
+            ) : (
             <AppShell>
                 {/* Back */}
                 <motion.div
@@ -181,7 +185,8 @@ export default function VaultDetailPage() {
                         </div>
                     </motion.div>
                 </div>
-        </AppShell>
+            </AppShell>
+            )}
         </ProtectedRoute>
     );
 }

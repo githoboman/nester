@@ -1,5 +1,4 @@
 package intelligence
-package intelligence
 
 import "time"
 

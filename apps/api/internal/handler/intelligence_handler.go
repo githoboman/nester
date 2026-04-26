@@ -3,8 +3,8 @@ package handler
 import (
 	"net/http"
 
-	"github.com/suncrestlabs/nester/apps/api/internal/service"
 	"github.com/go-chi/chi/v5"
+	"github.com/suncrestlabs/nester/apps/api/internal/service"
 )
 
 type IntelligenceHandler struct {

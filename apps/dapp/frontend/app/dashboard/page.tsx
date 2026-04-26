@@ -46,7 +46,6 @@ function getVaultIcon(vaultName: string) {
 }
 
 export default function Dashboard() {
-    const { isConnected } = useWallet();
     const { positions, transactions, balances } = usePortfolio();
     const { prices: tokenPrices } = useTokenPrices();
     const { currentNetwork } = useNetwork();
@@ -411,7 +410,7 @@ function WalletBalanceTable({
                 ))}
             </tbody>
         </table>
-            </div>
+        </div>
         </AppShell>
         </ProtectedRoute>
     );

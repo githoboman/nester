@@ -7,8 +7,9 @@ import (
 
 	"github.com/google/uuid"
 
-	logpkg "github.com/suncrestlabs/nester/apps/api/pkg/logger"
 	"log/slog"
+
+	logpkg "github.com/suncrestlabs/nester/apps/api/pkg/logger"
 )
 
 type statusRecorder struct {

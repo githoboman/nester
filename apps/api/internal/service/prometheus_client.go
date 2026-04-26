@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sync"
@@ -148,6 +149,10 @@ func (c *PrometheusClient) doRequest(ctx context.Context, endpoint string, targe
 			defer resp.Body.Close()
 			return json.NewDecoder(resp.Body).Decode(target)
 		}
+		if resp != nil && resp.Body != nil {
+			io.ReadAll(resp.Body)
+			resp.Body.Close()
+		}
 		if i < 2 {
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
 		}
@@ -157,7 +162,6 @@ func (c *PrometheusClient) doRequest(ctx context.Context, endpoint string, targe
 		return err
 	}
 	if resp != nil {
-		resp.Body.Close()
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 	return fmt.Errorf("request failed")

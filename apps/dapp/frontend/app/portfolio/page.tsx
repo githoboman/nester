@@ -4,7 +4,7 @@ import { useWallet } from "@/components/wallet-provider";
 import { usePortfolio, type PortfolioPosition } from "@/components/portfolio-provider";
 import { AppShell } from "@/components/app-shell";
 import { ProtectedRoute } from "@/components/protected-route";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     RefreshCw,
