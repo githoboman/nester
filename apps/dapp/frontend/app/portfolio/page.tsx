@@ -3,8 +3,8 @@
 import { useWallet } from "@/components/wallet-provider";
 import { usePortfolio, type PortfolioPosition } from "@/components/portfolio-provider";
 import { AppShell } from "@/components/app-shell";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { ProtectedRoute } from "@/components/protected-route";
+import { useCallback, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     RefreshCw,
@@ -90,10 +90,6 @@ export default function PortfolioPage() {
     const [withdrawPos, setWithdrawPos] = useState<PortfolioPosition | null>(null);
     const [transferPos, setTransferPos] = useState<PortfolioPosition | null>(null);
 
-    useEffect(() => {
-        if (!isConnected) router.push("/");
-    }, [isConnected, router]);
-
     const loadAssets = useCallback(async () => {
         if (!address) return;
         setLoading(true);
@@ -112,8 +108,6 @@ export default function PortfolioPage() {
         setTimeout(() => setCopied(false), 1500);
     };
 
-    if (!isConnected) return null;
-
     const xlmBal = walletAssets.find(a => a.code === "XLM")?.balance ?? 0;
     const usdcBal = walletAssets.find(a => a.code === "USDC")?.balance ?? 0;
     const walletUsd = xlmBal * tokenPrices.XLM + usdcBal * tokenPrices.USDC;
@@ -127,7 +121,8 @@ export default function PortfolioPage() {
     const recentTx = transactions.slice(0, 15);
 
     return (
-        <AppShell>
+        <ProtectedRoute>
+            <AppShell>
             {/* Header row */}
             <motion.div
                 initial={{ opacity: 0, y: -8 }}
@@ -383,5 +378,6 @@ export default function PortfolioPage() {
             <WithdrawModal open={withdrawPos !== null} onClose={() => setWithdrawPos(null)} position={withdrawPos} />
             <TransferModal open={transferPos !== null} onClose={() => setTransferPos(null)} position={transferPos} />
         </AppShell>
+        </ProtectedRoute>
     );
 }

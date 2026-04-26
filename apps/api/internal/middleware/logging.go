@@ -34,6 +34,9 @@ func Logging(baseLogger *slog.Logger) func(http.Handler) http.Handler {
 			recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			request := r.WithContext(ctx)
 
+			// Add request ID to response header for client-side tracing
+			w.Header().Set("X-Request-ID", requestID)
+
 			requestLogger.Info("request started",
 				"method", r.Method,
 				"path", r.URL.Path,

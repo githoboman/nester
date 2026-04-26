@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
+import { ProtectedRoute } from "@/components/protected-route";
 import { useWallet } from "@/components/wallet-provider";
 import { AppShell } from "@/components/app-shell";
 import Link from "next/link";
@@ -44,22 +45,23 @@ function InfoTooltip({ text }: { text: string }) {
 
 
 export default function VaultDetailPage() {
-    const { isConnected } = useWallet();
-    const router = useRouter();
     const { id } = useParams();
     
     const { data: vaults = [], isLoading } = useVaults();
     const vault = vaults.find(v => v.id === id?.toString());
 
+    // If vault isn't found after loading, redirect to vaults list
     useEffect(() => {
-        if (!isConnected) router.push("/");
-        else if (!isLoading && !vault) router.replace("/vaults");
-    }, [isConnected, vault, router, isLoading]);
+        if (!isLoading && !vault) {
+            window.location.href = "/vaults";
+        }
+    }, [vault, isLoading]);
 
-    if (!isConnected || isLoading || !vault) return null;
+    if (isLoading || !vault) return null;
 
     return (
-        <AppShell>
+        <ProtectedRoute>
+            <AppShell>
                 {/* Back */}
                 <motion.div
                     initial={{ opacity: 0, x: -8 }}
@@ -180,5 +182,6 @@ export default function VaultDetailPage() {
                     </motion.div>
                 </div>
         </AppShell>
+        </ProtectedRoute>
     );
 }
