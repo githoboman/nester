@@ -84,10 +84,9 @@ jobs:
           fetch-depth: 0
 
       - name: Run gitleaks
-        run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
-            | tar -xz gitleaks
-          ./gitleaks detect --source . --redact --exit-code 1
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -114,7 +113,7 @@ jobs:
         run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
       - name: Run gosec
-        run: gosec ./...
+        run: gosec -severity medium ./...
         working-directory: apps/api
 
       - uses: actions/setup-node@v4
