@@ -247,11 +247,11 @@ fn second_deposit_after_fee_accrual_uses_gross_assets_denominator() {
     mint(&token, &user_a, 2_000 * XLM);
     mint(&token, &user_b, 2_000 * XLM);
 
-    vault.deposit(&user_a, &(1_000 * XLM));
+    vault.deposit(&user_a, &(1_000 * XLM), &0);
     advance_time(&env, 365 * DAY);
 
     // This deposit triggers fee accrual first; share minting must still use gross total assets.
-    let user_b_shares = vault.deposit(&user_b, &(1_000 * XLM));
+    let user_b_shares = vault.deposit(&user_b, &(1_000 * XLM), &0);
     assert_eq!(user_b_shares, 1_000 * XLM);
 }
 
@@ -392,15 +392,15 @@ fn performance_fee_charges_only_realized_yield_not_principal() {
     vault.set_fee_config(&admin, &fee_config);
 
     vault.grant_role(&admin, &admin, &Role::Manager);
-    vault.deposit(&user_a, &(1_000 * XLM));
+    vault.deposit(&user_a, &(1_000 * XLM), &0);
     vault.report_yield(&admin, &(100 * XLM));
 
     // User B enters after yield is already reflected in share price.
-    let user_b_shares = vault.deposit(&user_b, &(1_000 * XLM));
+    let user_b_shares = vault.deposit(&user_b, &(1_000 * XLM), &0);
     assert_eq!(user_b_shares, 909_090_909);
 
     // User B immediately exits: no yield earned post-entry, so performance fee must be zero.
-    vault.withdraw(&user_b, &user_b_shares);
+    vault.withdraw(&user_b, &user_b_shares, &0);
     assert_eq!(
         token::Client::new(&env, &token.address).balance(&user_b),
         1_999 * XLM
