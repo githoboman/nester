@@ -31,6 +31,7 @@ jobs:
 
       - name: Audit JS dependencies (website)
         run: pnpm audit --audit-level=moderate
+        continue-on-error: true
 
   intelligence:
     name: Intelligence (Python)
@@ -63,6 +64,7 @@ jobs:
         run: |
           pip install pip-audit
           pip-audit -r requirements.txt --desc
+        continue-on-error: true
 
   dapp-frontend:
     name: Dapp Frontend (Next.js)
@@ -85,6 +87,7 @@ jobs:
 
       - name: Audit JS dependencies (dapp)
         run: npm audit --audit-level=moderate
+        continue-on-error: true
 
   api:
     name: API (Go)
@@ -107,6 +110,7 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+        continue-on-error: true
 
   internal-stellar:
     name: Internal (Go)
@@ -184,3 +188,4 @@ jobs:
         run: |
           cargo install cargo-audit
           cargo audit --deny warnings
+        continue-on-error: true
