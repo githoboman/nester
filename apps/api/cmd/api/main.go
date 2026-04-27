@@ -161,14 +161,16 @@ func run() error {
 
 	server := &http.Server{
 		Addr: cfg.Server().Address(),
-		Handler: middleware.RecoverPanic(baseLogger)(
-			globalLimiter(
-				cors(
-					writeLimiter(
-						authenticator(
-							walletLimiter(
-								middleware.LimitRequestBody(1 * 1024 * 1024)(
-									middleware.Logging(baseLogger)(mux),
+		Handler: middleware.SecurityHeaders(cfg.Environment())(
+			middleware.RecoverPanic(baseLogger)(
+				globalLimiter(
+					cors(
+						writeLimiter(
+							authenticator(
+								walletLimiter(
+									middleware.LimitRequestBody(1 * 1024 * 1024)(
+										middleware.Logging(baseLogger)(mux),
+									),
 								),
 							),
 						),
