@@ -1,28 +1,35 @@
 version: 2
 updates:
-  - package-ecosystem: "gomod"
-    directory: "/apps/api"
-    schedule:
-      interval: "weekly"
-    labels: ["dependencies", "go"]
-
   - package-ecosystem: "cargo"
     directory: "/packages/contracts"
     schedule:
       interval: "weekly"
-    labels: ["dependencies", "rust"]
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "smart-contracts"]
 
-  - package-ecosystem: "npm"
-    directory: "/apps/dapp/frontend"
+  - package-ecosystem: "gomod"
+    directory: "/apps/api"
     schedule:
       interval: "weekly"
-    labels: ["dependencies", "javascript"]
+    labels: ["dependencies", "backend"]
 
   - package-ecosystem: "pip"
     directory: "/apps/intelligence"
     schedule:
       interval: "weekly"
-    labels: ["dependencies", "python"]
+    labels: ["dependencies", "AI"]
+
+  - package-ecosystem: "npm"
+    directory: "/apps/dapp/frontend"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "frontend"]
+
+  - package-ecosystem: "npm"
+    directory: "/apps/website"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "frontend"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

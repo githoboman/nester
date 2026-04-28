@@ -10,7 +10,8 @@ use soroban_sdk::{
 use nester_access_control::Role;
 use vault_token::{VaultTokenContract, VaultTokenContractClient};
 
-use crate::{VaultContract, VaultContractClient, VaultStatus};
+use crate::{CircuitBreakerConfig, VaultContract, VaultContractClient, VaultStatus};
+use crate::{FeeConfig, VaultContract, VaultContractClient, VaultStatus};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -222,10 +223,36 @@ fn subsequent_deposit_uses_current_share_price() {
     mint(&token, &user_a, 1_000 * XLM);
     mint(&token, &user_b, 1_000 * XLM);
 
-    vault.deposit(&user_a, &(200 * XLM, &0));
-    let bal_b = vault.deposit(&user_b, &(100 * XLM, &0));
+    vault.deposit(&user_a, &(200 * XLM), &0);
+    let bal_b = vault.deposit(&user_b, &(100 * XLM), &0);
     assert_eq!(bal_b, 100 * XLM);
     assert_eq!(vault.get_total_deposits(), 300 * XLM);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #17)")]
+fn deposit_reverts_when_min_shares_out_is_not_met() {
+    let (_env, _admin, token, vault, _treasury) = setup();
+    let user = Address::generate(&_env);
+    mint(&token, &user, 1_000 * XLM);
+
+    vault.deposit(&user, &(100 * XLM), &(100 * XLM + STROOP));
+}
+
+#[test]
+fn second_deposit_after_fee_accrual_uses_gross_assets_denominator() {
+    let (env, _admin, token, vault, _treasury) = setup();
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    mint(&token, &user_a, 2_000 * XLM);
+    mint(&token, &user_b, 2_000 * XLM);
+
+    vault.deposit(&user_a, &(1_000 * XLM), &0);
+    advance_time(&env, 365 * DAY);
+
+    // This deposit triggers fee accrual first; share minting must still use gross total assets.
+    let user_b_shares = vault.deposit(&user_b, &(1_000 * XLM), &0);
+    assert_eq!(user_b_shares, 1_000 * XLM);
 }
 
 #[test]
@@ -241,7 +268,7 @@ fn deposit_of_zero_is_rejected() {
 fn deposit_of_negative_amount_is_rejected() {
     let (_env, _admin, _token, vault, _treasury) = setup();
     let user = Address::generate(&_env);
-    vault.deposit(&user, &(-1 * XLM, &0));
+    vault.deposit(&user, &(-1 * XLM), &0);
 }
 
 #[test]
@@ -252,7 +279,7 @@ fn deposit_fails_when_vault_is_paused() {
     mint(&token, &user, 100 * XLM);
 
     vault.pause(&admin);
-    vault.deposit(&user, &(50 * XLM, &0));
+    vault.deposit(&user, &(50 * XLM), &0);
 }
 
 // ---------------------------------------------------------------------------
@@ -265,10 +292,10 @@ fn full_withdrawal_leaves_zero_balance() {
     let user = Address::generate(&_env);
     mint(&token, &user, 500 * XLM);
 
-    vault.deposit(&user, &(500 * XLM, &0));
+    vault.deposit(&user, &(500 * XLM), &0);
     assert_eq!(vault.get_balance(&user), 500 * XLM);
 
-    vault.withdraw(&user, &(500 * XLM, &0));
+    vault.withdraw(&user, &(500 * XLM), &0);
     assert_eq!(vault.get_balance(&user), 0);
     assert_eq!(vault.get_total_deposits(), 0);
 }
@@ -279,8 +306,8 @@ fn partial_withdrawal_is_calculated_correctly() {
     let user = Address::generate(&_env);
     mint(&token, &user, 1_000 * XLM);
 
-    vault.deposit(&user, &(1_000 * XLM, &0));
-    vault.withdraw(&user, &(300 * XLM, &0));
+    vault.deposit(&user, &(1_000 * XLM), &0);
+    vault.withdraw(&user, &(300 * XLM), &0);
 
     assert_eq!(vault.get_balance(&user), 700 * XLM);
     assert_eq!(vault.get_total_deposits(), 700 * XLM);
@@ -292,12 +319,12 @@ fn withdrawal_after_yield_returns_principal_plus_yield() {
     let user = Address::generate(&_env);
     mint(&token, &user, 1_000 * XLM);
 
-    vault.deposit(&user, &(1_000 * XLM, &0));
+    vault.deposit(&user, &(1_000 * XLM), &0);
 
     let vault_address = vault.address.clone();
     mint(&token, &vault_address, 100 * XLM);
 
-    vault.withdraw(&user, &(1_000 * XLM, &0));
+    vault.withdraw(&user, &(1_000 * XLM), &0);
     assert_eq!(vault.get_balance(&user), 0);
     assert_eq!(vault.get_total_deposits(), 0);
 }
@@ -352,14 +379,54 @@ fn withdrawal_charges_perf_fee_only_on_realized_user_yield() {
 }
 
 #[test]
+fn performance_fee_charges_only_realized_yield_not_principal() {
+    let (env, admin, token, vault, _treasury) = setup();
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    mint(&token, &user_a, 2_000 * XLM);
+    mint(&token, &user_b, 2_000 * XLM);
+
+    // Disable early withdrawal fee so this test isolates performance fee behavior.
+    let mut fee_config: FeeConfig = vault.get_fee_config();
+    fee_config.early_withdrawal_fee_bps = 0;
+    vault.set_fee_config(&admin, &fee_config);
+
+    vault.grant_role(&admin, &admin, &Role::Manager);
+    vault.deposit(&user_a, &(1_000 * XLM), &0);
+    vault.report_yield(&admin, &(100 * XLM));
+
+    // User B enters after yield is already reflected in share price.
+    let user_b_shares = vault.deposit(&user_b, &(1_000 * XLM), &0);
+    assert_eq!(user_b_shares, 9_090_909_090);
+
+    // User B immediately exits: no yield earned post-entry, so performance fee must be zero.
+    vault.withdraw(&user_b, &user_b_shares, &0);
+    assert_eq!(
+        token::Client::new(&env, &token.address).balance(&user_b),
+        2_000 * XLM - 1
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #17)")]
+fn withdraw_reverts_when_min_assets_out_is_not_met() {
+    let (_env, _admin, token, vault, _treasury) = setup();
+    let user = Address::generate(&_env);
+    mint(&token, &user, 1_000 * XLM);
+
+    vault.deposit(&user, &(1_000 * XLM), &0);
+    vault.withdraw(&user, &(500 * XLM), &(500 * XLM + STROOP));
+}
+
+#[test]
 #[should_panic]
 fn withdrawal_of_more_than_owned_is_rejected() {
     let (_env, _admin, token, vault, _treasury) = setup();
     let user = Address::generate(&_env);
     mint(&token, &user, 100 * XLM);
 
-    vault.deposit(&user, &(100 * XLM, &0));
-    vault.withdraw(&user, &(100 * XLM + STROOP, &0));
+    vault.deposit(&user, &(100 * XLM), &0);
+    vault.withdraw(&user, &(100 * XLM + STROOP), &0);
 }
 
 #[test]
@@ -369,7 +436,7 @@ fn withdraw_of_zero_is_rejected() {
     let user = Address::generate(&_env);
     mint(&token, &user, 100 * XLM);
 
-    vault.deposit(&user, &(100 * XLM, &0));
+    vault.deposit(&user, &(100 * XLM), &0);
     vault.withdraw(&user, &0, &0);
 }
 
@@ -379,10 +446,10 @@ fn withdraw_of_zero_is_rejected() {
 //     let user = Address::generate(&_env);
 //     mint(&token, &user, 200 * XLM);
 
-//     vault.deposit(&user, &(200 * XLM, &0));
+//     vault.deposit(&user, &(200 * XLM));
 //     vault.pause(&admin);
 
-//     let new_bal = vault.withdraw(&user, &(200 * XLM, &0));
+//     let new_bal = vault.withdraw(&user, &(200 * XLM));
 //     assert_eq!(new_bal, 0);
 // }
 
@@ -476,6 +543,29 @@ fn withdrawal_after_lock_period_has_no_early_fee() {
     assert_eq!(vault.get_total_deposits(), 0);
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #11)")]
+fn circuit_breaker_uses_rolling_window_across_boundary() {
+    let (env, admin, token, vault, _treasury) = setup();
+    let user = Address::generate(&env);
+    let deposit_amount = 1_000 * XLM;
+    mint(&token, &user, deposit_amount);
+
+    vault.set_circuit_breaker_config(
+        &admin,
+        &CircuitBreakerConfig {
+            threshold_bps: 1000,
+            window_seconds: 60,
+        },
+    );
+
+    vault.deposit(&user, &deposit_amount);
+    vault.withdraw(&user, &(100 * XLM));
+
+    advance_time(&env, 60);
+    vault.withdraw(&user, &(100 * XLM));
+}
+
 // ---------------------------------------------------------------------------
 // Access control
 // ---------------------------------------------------------------------------
@@ -486,7 +576,7 @@ fn any_address_can_deposit() {
     let random_user = Address::generate(&_env);
     mint(&token, &random_user, 100 * XLM);
 
-    let bal = vault.deposit(&random_user, &(100 * XLM, &0));
+    let bal = vault.deposit(&random_user, &(100 * XLM), &0);
     assert_eq!(bal, 100 * XLM);
 }
 
@@ -496,8 +586,8 @@ fn any_address_can_withdraw() {
     let random_user = Address::generate(&_env);
     mint(&token, &random_user, 100 * XLM);
 
-    vault.deposit(&random_user, &(100 * XLM, &0));
-    let bal = vault.withdraw(&random_user, &(100 * XLM, &0));
+    vault.deposit(&random_user, &(100 * XLM), &0);
+    let bal = vault.withdraw(&random_user, &(100 * XLM), &0);
     assert_eq!(bal, 0);
 }
 
@@ -544,14 +634,14 @@ fn multiple_users_balances_are_independent() {
     mint(&token, &alice, 500 * XLM);
     mint(&token, &bob, 300 * XLM);
 
-    vault.deposit(&alice, &(500 * XLM, &0));
-    vault.deposit(&bob, &(300 * XLM, &0));
+    vault.deposit(&alice, &(500 * XLM), &0);
+    vault.deposit(&bob, &(300 * XLM), &0);
 
     assert_eq!(vault.get_balance(&alice), 500 * XLM);
     assert_eq!(vault.get_balance(&bob), 300 * XLM);
     assert_eq!(vault.get_total_deposits(), 800 * XLM);
 
-    vault.withdraw(&alice, &(200 * XLM, &0));
+    vault.withdraw(&alice, &(200 * XLM), &0);
     assert_eq!(vault.get_balance(&alice), 300 * XLM);
     assert_eq!(vault.get_balance(&bob), 300 * XLM);
     assert_eq!(vault.get_total_deposits(), 600 * XLM);
@@ -563,8 +653,8 @@ fn deposit_then_full_withdraw_resets_total_deposits() {
     let user = Address::generate(&_env);
     mint(&token, &user, 1_000 * XLM);
 
-    vault.deposit(&user, &(1_000 * XLM, &0));
-    vault.withdraw(&user, &(1_000 * XLM, &0));
+    vault.deposit(&user, &(1_000 * XLM), &0);
+    vault.withdraw(&user, &(1_000 * XLM), &0);
 
     assert_eq!(vault.get_total_deposits(), 0);
     assert_eq!(vault.get_balance(&user), 0);
@@ -672,7 +762,7 @@ fn emergency_withdraw_queue_processed_on_deposit() {
     mint(&token, &user1, 1_000 * XLM);
     mint(&token, &user2, 2_000 * XLM);
 
-    vault.deposit(&user1, &(1_000 * XLM, &0));
+    vault.deposit(&user1, &(1_000 * XLM), &0);
 
     advance_time(&env, 365 * DAY);
     vault.collect_fees(&admin);
@@ -685,11 +775,164 @@ fn emergency_withdraw_queue_processed_on_deposit() {
 
     // user2 deposits, providing liquidity, which processes queue
     vault.unpause(&admin);
-    vault.deposit(&user2, &(2_000 * XLM, &0));
+    vault.deposit(&user2, &(2_000 * XLM), &0);
 
     // user1 should have received their principal
     assert_eq!(
         token::Client::new(&env, &token.address).balance(&user1),
         1_000 * XLM
+    );
+}
+
+// ---------------------------------------------------------------------------
+// New Queries Tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_read_only_queries() {
+    let (env, admin, token, vault, _treasury) = setup();
+    let user = Address::generate(&env);
+    let deposit = 1_000 * XLM;
+
+    mint(&token, &user, deposit);
+    vault.deposit(&user, &deposit, &0);
+    
+    assert_eq!(vault.total_shares(), deposit);
+    assert_eq!(vault.share_price(), 10_000_000); // 1.0 share price initialized
+
+    // Simulate yield
+    vault.grant_role(&admin, &admin, &Role::Manager);
+    vault.report_yield(&admin, &(500 * XLM));
+
+    assert_eq!(vault.total_shares(), deposit);
+    assert_eq!(vault.share_price(), 15_000_000); // 1.5 share price
+    
+    // estimated fees
+    advance_time(&env, DAY);
+    let fees = vault.estimated_fees();
+    assert!(fees > 0);
+
+    // withdrawal preview
+    let preview = vault.withdrawal_fee_preview(&user, &deposit);
+    assert_eq!(preview.gross_asset_value, 1_500 * XLM);
+    assert!(preview.early_withdrawal_fee_deducted > 0);
+    assert!(preview.performance_fee_deducted > 0);
+    assert_eq!(preview.management_fee_deducted, 0);
+    assert!(preview.net_amount_received > 0);
+    assert!(preview.net_amount_received < preview.gross_asset_value);
+
+    // pending yield
+    // pending yield is contract balance minus liquid reserves
+    // Let's directly mint to contract to simulate un-reported yield
+    mint(&token, &vault.address, 200 * XLM);
+    assert_eq!(vault.pending_yield(), 200 * XLM);
+}
+
+// LiquidReserved tests — verifies collect_fees cannot over-draw committed funds
+// ---------------------------------------------------------------------------
+
+#[test]
+fn collect_fees_capped_when_emergency_queue_commits_all_reserves() {
+    // Deposit, accrue fees, then queue an emergency withdrawal that commits
+    // all liquid reserves.  collect_fees must transfer nothing.
+    let (env, admin, token, vault, _treasury) = setup();
+    let user = Address::generate(&env);
+    mint(&token, &user, 1_000 * XLM);
+
+    vault.deposit(&user, &(1_000 * XLM), &0);
+
+    // Accrue a full year of management fee
+    advance_time(&env, 365 * DAY);
+    vault.pause(&admin);
+
+    // User queues an emergency withdrawal, which reserves their principal
+    vault.emergency_withdraw(&user);
+
+    // Now all liquid reserves are committed to the queue.
+    // collect_fees should transfer 0 — fees exist but available = 0.
+    let treasury_before = token::Client::new(&env, &token.address).balance(&_treasury);
+    vault.unpause(&admin);
+    vault.collect_fees(&admin);
+    let treasury_after = token::Client::new(&env, &token.address).balance(&_treasury);
+
+    assert_eq!(
+        treasury_after, treasury_before,
+        "collect_fees must not transfer when all reserves are committed to the queue"
+    );
+}
+
+#[test]
+fn collect_fees_transfers_only_unreserved_portion() {
+    // Two users deposit.  One queues an emergency withdrawal (reserving half
+    // the pool).  collect_fees should be capped to the unreserved half.
+    let (env, admin, token, vault, _treasury) = setup();
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    mint(&token, &user1, 500 * XLM);
+    mint(&token, &user2, 500 * XLM);
+
+    vault.deposit(&user1, &(500 * XLM), &0);
+    vault.deposit(&user2, &(500 * XLM), &0);
+
+    advance_time(&env, 365 * DAY);
+    vault.pause(&admin);
+
+    // user1's emergency withdrawal reserves ~500 XLM from the pool
+    vault.emergency_withdraw(&user1);
+
+    vault.unpause(&admin);
+
+    let treasury_before = token::Client::new(&env, &token.address).balance(&_treasury);
+    vault.collect_fees(&admin);
+    let treasury_after = token::Client::new(&env, &token.address).balance(&_treasury);
+
+    let fees_collected = treasury_after - treasury_before;
+
+    // The reserved portion (user1's principal, ~500 XLM) must not be touched.
+    // Fees collected must be strictly less than the total accrued fees.
+    let total_reserves = token::Client::new(&env, &token.address).balance(&vault.address);
+    assert!(
+        fees_collected < total_reserves,
+        "collect_fees must not exceed unreserved liquid reserves"
+    );
+}
+
+#[test]
+fn process_emergency_queue_decrements_liquid_reserved() {
+    // After a queued withdrawal is processed, LiquidReserved must decrease
+    // so that subsequent collect_fees calls can access those funds again.
+    let (env, admin, token, vault, _treasury) = setup();
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    mint(&token, &user1, 1_000 * XLM);
+    mint(&token, &user2, 2_000 * XLM);
+
+    vault.deposit(&user1, &(1_000 * XLM), &0);
+    advance_time(&env, 365 * DAY);
+    vault.pause(&admin);
+
+    vault.emergency_withdraw(&user1);
+    // user1 is now queued; reserved = ~1000 XLM
+
+    // user2 deposits, providing liquidity and processing the queue
+    vault.unpause(&admin);
+    vault.deposit(&user2, &(2_000 * XLM), &0);
+
+    // user1 should have received their principal
+    assert_eq!(
+        token::Client::new(&env, &token.address).balance(&user1),
+        1_000 * XLM,
+        "queued user should receive principal after queue is processed"
+    );
+
+    // After the queue is processed, collect_fees should succeed (reserved = 0)
+    advance_time(&env, 30 * DAY);
+    let treasury_before = token::Client::new(&env, &token.address).balance(&_treasury);
+    vault.collect_fees(&admin);
+    let treasury_after = token::Client::new(&env, &token.address).balance(&_treasury);
+
+    assert!(
+        treasury_after > treasury_before,
+        "collect_fees should transfer fees once LiquidReserved is decremented after queue processing"
     );
 }
