@@ -30,3 +30,9 @@ updates:
     schedule:
       interval: "weekly"
     labels: ["dependencies", "frontend"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "ci"]
