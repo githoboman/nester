@@ -22,6 +22,7 @@ import (
 	"github.com/suncrestlabs/nester/apps/api/internal/repository/postgres"
 	"github.com/suncrestlabs/nester/apps/api/internal/service"
 	performancesvc "github.com/suncrestlabs/nester/apps/api/internal/service/performance"
+	"github.com/suncrestlabs/nester/apps/api/internal/ws"
 	logpkg "github.com/suncrestlabs/nester/apps/api/pkg/logger"
 )
 
@@ -105,6 +106,19 @@ func run() error {
 
 	oracleService := oracle.NewRateService(cfg.Stellar().HorizonURL())
 	rateHandler := handler.NewRateHandler(oracleService)
+	
+	wsHub := ws.NewHub(baseLogger.WithGroup("websocket"), func(token string) (string, error) {
+		// Token validation should be performed here. 
+		// Return userID if successful, error otherwise.
+		if token == "" {
+			return "", fmt.Errorf("missing token")
+		}
+		return "user-id-from-token", nil // Placeholder for actual JWT validation
+	})
+	
+	wsCtx, wsCancel := context.WithCancel(context.Background())
+	defer wsCancel()
+	go wsHub.Run(wsCtx)
 
 	performanceRepository := postgres.NewPerformanceRepository(db)
 	performanceService := performancesvc.NewService(performanceRepository)
@@ -136,10 +150,13 @@ func run() error {
 	rateHandler.Register(mux)
 	performanceHandler.Register(mux)
 
+	mux.HandleFunc("GET /ws", wsHub.ServeWs)
+
 	authRules := []middleware.RouteRule{
 		{PathPrefix: "/health", Public: true},
 		{PathPrefix: "/healthz", Public: true},
 		{PathPrefix: "/readyz", Public: true},
+		{PathPrefix: "/ws", Public: true},
 		{PathPrefix: "/api/v1/auth/", Public: true},
 		{PathPrefix: "/api/v1/admin/", Public: false, Role: "admin"},
 		{PathPrefix: "/api/v1/", Public: false},
@@ -164,14 +181,16 @@ func run() error {
 
 	server := &http.Server{
 		Addr: cfg.Server().Address(),
-		Handler: middleware.RecoverPanic(baseLogger)(
-			globalLimiter(
-				cors(
-					writeLimiter(
-						authenticator(
-							walletLimiter(
-								middleware.LimitRequestBody(1 * 1024 * 1024)(
-									middleware.Logging(baseLogger)(mux),
+		Handler: middleware.SecurityHeaders(cfg.Environment())(
+			middleware.RecoverPanic(baseLogger)(
+				globalLimiter(
+					cors(
+						writeLimiter(
+							authenticator(
+								walletLimiter(
+									middleware.LimitRequestBody(1 * 1024 * 1024)(
+										middleware.Logging(baseLogger)(mux),
+									),
 								),
 							),
 						),
